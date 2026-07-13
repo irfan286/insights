@@ -31,6 +31,7 @@ def get_user_info():
     roles = frappe.get_roles()
     is_user = "Insights User" in roles
     is_admin = "Insights Admin" in roles
+    is_viewer = "Insights Viewer" in roles
 
     user = frappe.db.get_value(
         "User", frappe.session.user, ["first_name", "last_name", "user_type", "language"], as_dict=1
@@ -50,6 +51,7 @@ def get_user_info():
         "last_name": user.get("last_name"),
         "is_admin": is_admin,
         "is_user": is_user or frappe.session.user == "Administrator",
+        "is_viewer": is_viewer and not is_admin and not is_user,
         "can_download": is_admin or bool(frappe.db.get_single_value("Insights Settings", "allow_download")),
         # TODO: move to `get_session_info` since not user specific
         "country": frappe.db.get_single_value("System Settings", "country"),

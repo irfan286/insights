@@ -404,7 +404,7 @@ def check_app_permission():
         return True
 
     roles = frappe.get_roles()
-    if any(role in ["Insights User", "Insights Admin"] for role in roles):
+    if any(role in ["Insights User", "Insights Admin", "Insights Viewer"] for role in roles):
         return True
 
     return False

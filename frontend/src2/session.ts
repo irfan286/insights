@@ -9,6 +9,7 @@ type SessionUser = {
 	user_image: string
 	is_admin: boolean
 	is_user: boolean
+	is_viewer: boolean
 	can_download: boolean
 	country: string
 	locale: string
@@ -27,6 +28,7 @@ const emptyUser: SessionUser = {
 	user_image: '',
 	is_admin: false,
 	is_user: false,
+	is_viewer: false,
 	can_download: true,
 	country: '',
 	locale: 'en-US',
@@ -52,7 +54,7 @@ const session = reactive({
 // @ts-ignore
 session.isLoggedIn = computed(() => session.user.email && session.user.email !== 'Guest')
 // @ts-ignore
-session.isAuthorized = computed(() => session.user.is_admin || session.user.is_user)
+session.isAuthorized = computed(() => session.user.is_admin || session.user.is_user || session.user.is_viewer)
 
 async function initialize(force: boolean = false) {
 	if (session.initialized && !force) return
@@ -68,6 +70,7 @@ async function fetchSessionInfo() {
 		...userInfo,
 		is_admin: Boolean(userInfo.is_admin),
 		is_user: Boolean(userInfo.is_user),
+		is_viewer: Boolean(userInfo.is_viewer),
 		is_v2_instance: Boolean(userInfo.is_v2_instance),
 		has_desk_access: Boolean(userInfo.has_desk_access),
 		has_demo_data: Boolean(userInfo.has_demo_data),

@@ -11,6 +11,7 @@ import DashboardItem from './DashboardItem.vue'
 import DashboardShareDialog from './DashboardShareDialog.vue'
 import VueGridLayout from './VueGridLayout.vue'
 import { __ } from '../translation'
+import session from '../session'
 
 const props = defineProps<{
 	dashboard_name: string
@@ -98,7 +99,7 @@ async function downloadDashboardImage() {
 						</template>
 					</Button>
 					<Button
-						v-if="!dashboard.editing"
+						v-if="!dashboard.editing && !session.user.is_viewer"
 						variant="outline"
 						@click="dashboard.editing = true"
 						label="Edit"

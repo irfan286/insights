@@ -29,13 +29,14 @@ const routes = [
 		path: '/workbook',
 		name: 'WorkbookList',
 		component: () => import('./workbook/WorkbookList.vue'),
+		meta: { viewerBlocked: true },
 	},
 	{
 		props: true,
 		name: 'Workbook',
 		path: '/workbook/:workbook_name',
 		component: () => import('./workbook/Workbook.vue'),
-		meta: { hideSidebar: true },
+		meta: { hideSidebar: true, viewerBlocked: true },
 		children: [
 			{
 				props: true,
@@ -61,23 +62,27 @@ const routes = [
 		path: '/data-source',
 		name: 'DataSourceList',
 		component: () => import('./data_source/DataSourceList.vue'),
+		meta: { viewerBlocked: true },
 	},
 	{
 		props: true,
 		path: '/data-source/:name',
 		name: 'DataSourceTableList',
 		component: () => import('./data_source/DataSourceTableList.vue'),
+		meta: { viewerBlocked: true },
 	},
 	{
 		props: true,
 		path: '/data-source/:data_source/:table_name',
 		name: 'DataSourceTable',
 		component: () => import('./data_source/DataSourceTable.vue'),
+		meta: { viewerBlocked: true },
 	},
 	{
 		path: '/data-store',
 		name: 'DataStoreList',
 		component: () => import('./data_store/DataStoreList.vue'),
+		meta: { viewerBlocked: true },
 	},
 	{
 		props: true,
@@ -129,6 +134,10 @@ router.beforeEach(async (to, _, next) => {
 		// redirect to frappe login page, for oauth and signup
 		window.location.href = '/login'
 		return next(false)
+	}
+
+	if (to.meta.viewerBlocked && session.user.is_viewer) {
+		return next('/dashboards')
 	}
 
 	to.path === '/login' ? next('/') : next()

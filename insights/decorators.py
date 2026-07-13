@@ -17,8 +17,11 @@ def check_role(role):
             if frappe.session.user == "Administrator":
                 return function(*args, **kwargs)
 
-            has_required_role = role in frappe.get_roles(frappe.session.user)
+            user_roles = frappe.get_roles(frappe.session.user)
+            has_required_role = role in user_roles
             if role == "Insights User" and is_admin(frappe.session.user):
+                has_required_role = True
+            if role == "Insights User" and "Insights Viewer" in user_roles:
                 has_required_role = True
 
             if not has_required_role:
