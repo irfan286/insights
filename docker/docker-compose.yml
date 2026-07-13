@@ -1,31 +1,121 @@
 version: "3.7"
+
+x-common: &common
+  image: ${CUSTOM_IMAGE:-my-insights}:${CUSTOM_TAG:-latest}
+  environment:
+    DB_HOST: db
+    DB_PORT: "3306"
+    REDIS_CACHE: redis-cache:6379
+    REDIS_QUEUE: redis-queue:6379
+    SOCKETIO_PORT: "9000"
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+    - logs:/home/frappe/frappe-bench/logs
+  depends_on:
+    db:
+      condition: service_healthy
+    redis-cache:
+      condition: service_started
+    redis-queue:
+      condition: service_started
+  restart: unless-stopped
+
 services:
-  mariadb:
-    image: mariadb:10.8
+  backend:
+    <<: *common
+
+  websocket:
+    <<: *common
+    command:
+      - node
+      - /home/frappe/frappe-bench/apps/frappe/socketio.js
+
+  queue-short:
+    <<: *common
+    command: bench worker --queue short,default
+
+  queue-long:
+    <<: *common
+    command: bench worker --queue long,default,short
+
+  scheduler:
+    <<: *common
+    command: bench schedule
+
+  frontend:
+    image: frappe/frappe-nginx:version-15
+    environment:
+      BACKEND: backend:8000
+      SOCKETIO: websocket:9000
+      FRAPPE_SITE_NAME_HEADER: ${SITE_NAME:-insights.localhost}
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    ports:
+      - "${PORT:-8080}:8080"
+    depends_on:
+      - backend
+      - websocket
+    restart: unless-stopped
+
+  db:
+    image: mariadb:10.6
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --skip-character-set-client-handshake
-      - --skip-innodb-read-only-compressed # Temporary fix for MariaDB 10.6
+      - --skip-innodb-read-only-compressed
     environment:
-      MYSQL_ROOT_PASSWORD: 123
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD not set}
     volumes:
-      - mariadb-data:/var/lib/mysql
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "--password=${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
-  redis:
+  redis-cache:
     image: redis:alpine
+    restart: unless-stopped
 
-  frappe:
-    image: frappe/bench:latest
-    command: bash /workspace/init.sh
-    environment:
-      - SHELL=/bin/bash
-    working_dir: /home/frappe
-    volumes:
-      - .:/workspace
-    ports:
-      - 8000:8000
-      - 9000:9000
+  redis-queue:
+    image: redis:alpine
+    restart: unless-stopped
+
+  create-site:
+    <<: *common
+    restart: "no"
+    entrypoint:
+      - bash
+      - -c
+    command:
+      - >
+        wait-for-it -t 120 db:3306;
+        wait-for-it -t 120 redis-cache:6379;
+        wait-for-it -t 120 redis-queue:6379;
+        export start=`date +%s`;
+        until [[ -n `grep -hs ^ sites/common_site_config.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('db_host',''))" ` ]];
+        do
+          echo "Waiting for common_site_config.json...";
+          sleep 5;
+          if (( `date +%s`-start > 120 )); then echo "Timeout"; exit 1; fi;
+        done;
+        bench new-site
+        --mariadb-user-host-login-scope='%'
+        --admin-password=${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+        --db-root-password=${MYSQL_ROOT_PASSWORD}
+        --install-app insights
+        --set-default
+        ${SITE_NAME:-insights.localhost};
+        bench --site ${SITE_NAME:-insights.localhost} set-config server_script_enabled 1;
 
 volumes:
-  mariadb-data:
+  db-data:
+  sites:
+  logs:
