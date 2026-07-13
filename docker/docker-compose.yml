@@ -1,84 +1,121 @@
 version: "3.7"
 
-x-common: &common
+x-customizable-image: &customizable_image
   image: ${CUSTOM_IMAGE:-my-insights}:${CUSTOM_TAG:-latest}
-  environment:
-    DB_HOST: db
-    DB_PORT: "3306"
-    REDIS_CACHE: redis-cache:6379
-    REDIS_QUEUE: redis-queue:6379
-    SOCKETIO_PORT: "9000"
+  pull_policy: ${PULL_POLICY:-always}
+  restart: ${RESTART_POLICY:-unless-stopped}
+
+x-depends-on-configurator: &depends_on_configurator
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+
+x-backend-defaults: &backend_defaults
+  <<: [*depends_on_configurator, *customizable_image]
   volumes:
     - sites:/home/frappe/frappe-bench/sites
-    - logs:/home/frappe/frappe-bench/logs
-  depends_on:
-    db:
-      condition: service_healthy
-    redis-cache:
-      condition: service_started
-    redis-queue:
-      condition: service_started
-  restart: unless-stopped
 
 services:
+  configurator:
+    <<: *backend_defaults
+    entrypoint:
+      - bash
+      - -c
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+      SOCKETIO_PORT: "9000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_started
+      redis-queue:
+        condition: service_started
+    restart: on-failure
+
   backend:
-    <<: *common
-
-  websocket:
-    <<: *common
-    command:
-      - node
-      - /home/frappe/frappe-bench/apps/frappe/socketio.js
-
-  queue-short:
-    <<: *common
-    command:
-      - /home/frappe/frappe-bench/env/bin/python
-      - -m
-      - frappe.utils.bench_helper
-      - frappe
-      - worker
-      - --queue
-      - short,default
-
-  queue-long:
-    <<: *common
-    command:
-      - /home/frappe/frappe-bench/env/bin/python
-      - -m
-      - frappe.utils.bench_helper
-      - frappe
-      - worker
-      - --queue
-      - long,default,short
-
-  scheduler:
-    <<: *common
-    command:
-      - /home/frappe/frappe-bench/env/bin/python
-      - -m
-      - frappe.utils.bench_helper
-      - frappe
-      - schedule
+    <<: *backend_defaults
 
   frontend:
-    image: frappe/frappe-nginx:version-15
+    <<: *customizable_image
+    command:
+      - nginx-entrypoint.sh
     environment:
       BACKEND: backend:8000
       SOCKETIO: websocket:9000
-      FRAPPE_SITE_NAME_HEADER: ${SITE_NAME:-insights.localhost}
-      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
-      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
-      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME_HEADER:-frontend}
+      UPSTREAM_REAL_IP_ADDRESS: ${UPSTREAM_REAL_IP_ADDRESS:-127.0.0.1}
+      UPSTREAM_REAL_IP_HEADER: ${UPSTREAM_REAL_IP_HEADER:-X-Forwarded-For}
+      UPSTREAM_REAL_IP_RECURSIVE: ${UPSTREAM_REAL_IP_RECURSIVE:-off}
+      PROXY_READ_TIMEOUT: ${PROXY_READ_TIMEOUT:-120}
+      CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-50m}
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - logs:/home/frappe/frappe-bench/logs
     ports:
       - "${PORT:-8080}:8080"
     depends_on:
       - backend
       - websocket
     restart: unless-stopped
+
+  websocket:
+    <<: [*depends_on_configurator, *customizable_image]
+    command:
+      - node
+      - /home/frappe/frappe-bench/apps/frappe/socketio.js
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+
+  queue-short:
+    <<: *backend_defaults
+    command: bench worker --queue short,default
+
+  queue-long:
+    <<: *backend_defaults
+    command: bench worker --queue long,default,short
+
+  scheduler:
+    <<: *backend_defaults
+    command: bench schedule
+
+  create-site:
+    <<: *backend_defaults
+    restart: "no"
+    entrypoint:
+      - bash
+      - -c
+    command:
+      - >
+        wait-for-it -t 120 db:3306;
+        wait-for-it -t 120 redis-cache:6379;
+        wait-for-it -t 120 redis-queue:6379;
+        export start=`date +%s`;
+        until [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".db_host // empty"` ]];
+        do
+          echo "Waiting for configurator...";
+          sleep 5;
+          if (( `date +%s`-start > 120 )); then echo "Timeout waiting for configurator"; exit 1; fi;
+        done;
+        bench new-site
+        --mariadb-user-host-login-scope='%'
+        --admin-password=${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+        --db-root-password=${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD not set}
+        --install-app insights
+        --set-default
+        ${SITE_NAME:-insights.localhost};
+        bench --site ${SITE_NAME:-insights.localhost} set-config server_script_enabled 1;
 
   db:
     image: mariadb:10.6
@@ -107,34 +144,6 @@ services:
     image: redis:alpine
     restart: unless-stopped
 
-  create-site:
-    <<: *common
-    restart: "no"
-    entrypoint:
-      - bash
-      - -c
-    command:
-      - >
-        wait-for-it -t 120 db:3306;
-        wait-for-it -t 120 redis-cache:6379;
-        wait-for-it -t 120 redis-queue:6379;
-        export start=`date +%s`;
-        until [[ -n `grep -hs ^ sites/common_site_config.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('db_host',''))" ` ]];
-        do
-          echo "Waiting for common_site_config.json...";
-          sleep 5;
-          if (( `date +%s`-start > 120 )); then echo "Timeout"; exit 1; fi;
-        done;
-        bench new-site
-        --mariadb-user-host-login-scope='%'
-        --admin-password=${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
-        --db-root-password=${MYSQL_ROOT_PASSWORD}
-        --install-app insights
-        --set-default
-        ${SITE_NAME:-insights.localhost};
-        bench --site ${SITE_NAME:-insights.localhost} set-config server_script_enabled 1;
-
 volumes:
   db-data:
   sites:
-  logs:

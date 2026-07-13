@@ -12,6 +12,7 @@ RUN useradd -ms /bin/bash frappe \
     curl \
     git \
     vim \
+    nginx \
     gettext-base \
     file \
     mariadb-client \
@@ -31,7 +32,21 @@ RUN useradd -ms /bin/bash frappe \
     && echo 'export NVM_DIR="/home/frappe/.nvm"' >>/home/frappe/.bashrc \
     && echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >>/home/frappe/.bashrc \
     && pip3 install frappe-bench \
-    && rm -rf /var/lib/apt/lists/*
+    && sed -i '/user www-data/d' /etc/nginx/nginx.conf \
+    && ln -sf /dev/stdout /var/log/nginx/access.log \
+    && ln -sf /dev/stderr /var/log/nginx/error.log \
+    && touch /run/nginx.pid \
+    && chown -R frappe:frappe /etc/nginx/conf.d \
+    && chown -R frappe:frappe /etc/nginx/nginx.conf \
+    && chown -R frappe:frappe /var/log/nginx \
+    && chown -R frappe:frappe /var/lib/nginx \
+    && chown -R frappe:frappe /run/nginx.pid \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/nginx/sites-enabled/default
+
+COPY docker/resources/nginx-template.conf /templates/nginx/frappe.conf.template
+COPY docker/resources/nginx-entrypoint.sh /usr/local/bin/nginx-entrypoint.sh
+RUN chmod 755 /usr/local/bin/nginx-entrypoint.sh
 
 # Build stage — includes compilers and build tools
 FROM base AS build
@@ -56,28 +71,28 @@ RUN apt-get update \
 
 USER frappe
 
-# Builder stage — init bench + install insights from fork
+# Builder stage — init bench + install insights from fork via apps.json
 FROM build AS builder
 
 ARG FRAPPE_BRANCH=version-15
 ARG FRAPPE_PATH=https://github.com/frappe/frappe
-ARG INSIGHTS_REPO=https://github.com/YOUR_USERNAME/insights
-ARG INSIGHTS_BRANCH=version-3
+
+COPY --chown=frappe:frappe docker/apps.json /opt/frappe/apps.json
 
 RUN bench init \
     --frappe-branch=${FRAPPE_BRANCH} \
     --frappe-path=${FRAPPE_PATH} \
+    --apps_path=/opt/frappe/apps.json \
     --no-procfile \
     --no-backups \
     --skip-redis-config-generation \
     --verbose \
     /home/frappe/frappe-bench && \
     cd /home/frappe/frappe-bench && \
-    bench get-app --branch=${INSIGHTS_BRANCH} insights ${INSIGHTS_REPO} && \
     echo "{}" > sites/common_site_config.json && \
     find apps -mindepth 1 -path "*/.git" | xargs rm -fr
 
-# Final image — slim runtime only, no build tools
+# Final image — runtime only, no build tools
 FROM base AS insights
 
 USER frappe
