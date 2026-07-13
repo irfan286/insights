@@ -9,6 +9,12 @@ import NumberFilterPicker from '../query/components/NumberFilterPicker.vue'
 import RelativeDatePicker from '../query/components/RelativeDatePicker.vue'
 import { FilterOperator, FilterValue } from '../types/query.types'
 
+const BOOLEAN_OPTIONS = [
+	{ label: 'All', operator: undefined },
+	{ label: 'True', operator: 'is_true' as FilterOperator },
+	{ label: 'False', operator: 'is_not_true' as FilterOperator },
+]
+
 const props = defineProps<{
 	filterType: FilterType
 	valuesProvider: (search: string) => Promise<string[]>
@@ -42,8 +48,8 @@ function onOperatorChange(operator: FilterOperator) {
 }
 
 function applyFilter() {
-	filterOperator.value = state.operator
-	filterValue.value = state.value
+	filterOperator.value = state.operator || undefined
+	filterValue.value = state.operator ? state.value : undefined
 	emit('close')
 }
 function clearFilter() {
@@ -70,8 +76,18 @@ const dateRangeVal = computed({
 
 <template>
 	<div class="flex flex-col gap-2">
+		<div v-if="filterType === 'Boolean'" class="flex gap-1">
+			<Button
+				v-for="opt in BOOLEAN_OPTIONS"
+				:key="opt.label"
+				:variant="state.operator === opt.operator ? 'solid' : 'outline'"
+				@click="state.operator = opt.operator; applyFilter()"
+			>
+				{{ opt.label }}
+			</Button>
+		</div>
 		<NumberFilterPicker
-			v-if="filterType === 'Number'"
+			v-else-if="filterType === 'Number'"
 			class="w-[200px]"
 			v-model:operator="state.operator"
 			v-model:value="state.value as number"

@@ -43,6 +43,7 @@ export type ColumnDataType =
 	| 'Text'
 	| 'JSON'
 	| 'Array'
+	| 'Boolean'
 	| 'Auto'
 export type MeasureDataType = 'String' | 'Integer' | 'Decimal'
 export type DimensionDataType = 'String' | 'Date' | 'Datetime' | 'Time'
@@ -67,6 +68,9 @@ export type FilterOperator =
 	| 'ends_with'
 	| 'is_set'
 	| 'is_not_set'
+	| 'is_true'
+	| 'is_false'
+	| 'is_not_true'
 export type FilterValue = string | number | boolean | any[] | string[] | undefined
 export type Expression = {
 	type: 'expression'

@@ -53,6 +53,7 @@ const cards = computed(() => {
 		const decimal = getNumberOption(idx, 'decimal')
 		const color = getNumberOption(idx, 'color')
 		const shorten_numbers = getNumberOption(idx, 'shorten_numbers')
+		const font_size = getNumberOption(idx, 'font_size')
 
 		return {
 			measure_name,
@@ -64,6 +65,7 @@ const cards = computed(() => {
 			prefix,
 			suffix,
 			color,
+			font_size,
 		}
 	})
 })
@@ -79,6 +81,17 @@ const getFormattedValue = (value: number, decimal?: number, shorten_numbers?: bo
 function getNumberOption(index: number, option: keyof NumberColumnOptions) {
 	const numberOption = config.value.number_column_options?.[index]?.[option] as any
 	return numberOption === undefined ? config.value[option] : numberOption
+}
+
+const fontSizeMap: Record<string, string> = {
+	sm: '14px',
+	md: '18px',
+	lg: '24px',
+	xl: '32px',
+	'2xl': '40px',
+}
+function getFontSize(font_size?: string) {
+	return font_size ? fontSizeMap[font_size] || '24px' : '24px'
 }
 
 function onDoubleClick(measure_name: string) {
@@ -105,6 +118,7 @@ function onDoubleClick(measure_name: string) {
 					prefix,
 					suffix,
 					color,
+					font_size,
 				} in cards"
 				:key="measure_name"
 				class="flex max-h-[140px] items-center gap-2 overflow-hidden rounded bg-white px-6 pt-5 shadow cursor-pointer"
@@ -116,8 +130,11 @@ function onDoubleClick(measure_name: string) {
 						{{ measure_name }}
 					</span>
 					<div
-						class="flex-1 flex-shrink-0 truncate text-[24px] font-semibold leading-10"
-						:style="color && typeof color === 'string' ? { color: color } : {}"
+						class="flex-1 flex-shrink-0 truncate font-semibold leading-10"
+						:style="{
+							fontSize: getFontSize(font_size),
+							...(color && typeof color === 'string' ? { color } : {}),
+						}"
 					>
 						{{ prefix }}{{ currentValue }}{{ suffix }}
 					</div>

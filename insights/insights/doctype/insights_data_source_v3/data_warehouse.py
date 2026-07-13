@@ -168,6 +168,20 @@ class WarehouseTableWriter:
         if self._temp_dir is None:
             raise RuntimeError("WarehouseTableWriter must be used as a context manager")
 
+        # Cast decimal columns to float64 to avoid PyArrow rescaling errors
+        # when converting from PostgreSQL (or other sources) with varying precision/scale
+        if isinstance(data, Expr):
+            import ibis.expr.datatypes as dt
+
+            schema = data.schema()
+            casts = {
+                col: data[col].cast(dt.float64())
+                for col, dtype in schema.items()
+                if isinstance(dtype, dt.Decimal)
+            }
+            if casts:
+                data = data.mutate(**casts)
+
         # switch to memory backend for writing to temp directory
         data = ibis.memtable(data)
 
@@ -620,7 +634,7 @@ class WarehouseTableImporter:
         sample_rows = self.remote_table.head(sample_size).execute()
         total_size = sum(sample_rows[column].memory_usage(deep=True) for column in sample_rows.columns)
         row_size = total_size / sample_size / (1024 * 1024)
-        batch_size = int(self.settings.memory_limit / row_size)
+        batch_size = min(int(self.settings.memory_limit / row_size), 2_000_000)
         self.log.db_set(
             {
                 "row_size": row_size * 1024,

@@ -433,6 +433,9 @@ class IbisQueryBuilder:
             "ends_with": lambda x, y: x.like(f"%{y}"),
             "between": lambda x, y: x.between(y[0], y[1]),
             "within": lambda x, y: handle_timespan(x, y),
+            "is_true": lambda x, y: x == True,
+            "is_false": lambda x, y: x == False,
+            "is_not_true": lambda x, y: (x == False) | x.isnull(),
         }[operator]
 
     def apply_filter_group(self, filter_group_args):
@@ -490,6 +493,7 @@ class IbisQueryBuilder:
             "Text": "string",
             "JSON": "json",
             "Array": "array<json>",
+            "Boolean": "boolean",
             "Auto": "",
         }[data_type]
 
@@ -535,6 +539,14 @@ class IbisQueryBuilder:
             ]
             if date_dimensions:
                 self.query = self.query.cast({dimension: "string" for dimension in date_dimensions})
+
+            boolean_dimensions = [
+                self.translate_dimension(dim).get_name()
+                for dim in pivot_args["columns"]
+                if dim.data_type == "Boolean"
+            ]
+            if boolean_dimensions:
+                self.query = self.query.cast({dimension: "string" for dimension in boolean_dimensions})
 
             names_from = [col.get_name() for col in columns]
             max_names = pivot_args.get("max_column_values", 10)
@@ -932,7 +944,17 @@ def execute_ibis_query(
         # TODO: throw better error message
         raise
 
-    backend = query.get_backend()
+    try:
+        backend = query.get_backend()
+    except ibis.common.exceptions.IbisError as e:
+        if "Multiple backends" in str(e):
+            frappe.throw(
+                "Query ini menggabungkan tabel dari beberapa data source yang berbeda. "
+                "Pastikan semua tabel dalam query berasal dari data source yang sama, "
+                "atau gunakan fitur Data Store (sync ke warehouse) agar bisa di-join lintas sumber.",
+                title="Multiple Data Sources Detected",
+            )
+        raise
     if cache:
         backend_id = backend.db_identity if backend else None
         cache_key = make_digest(sql, backend_id)
@@ -996,6 +1018,8 @@ def get_columns_from_schema(schema: ibis.Schema):
 
 
 def to_insights_type(dtype: DataType):
+    if dtype.is_boolean():
+        return "Boolean"
     if dtype.is_string():
         return "String"
     if dtype.is_integer():

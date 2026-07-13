@@ -6,14 +6,16 @@ const TextTypes = ['Text', 'String', 'JSON', 'Array']
 const DateTypes = ['Date', 'Datetime', 'Time']
 const CalendarDateTypes = ['Date', 'Datetime']
 const TimeTypes = ['Time']
+const BooleanTypes = ['Boolean']
 
 export const FIELDTYPES = {
 	NUMBER: NumberTypes,
 	TEXT: TextTypes,
 	DATE: DateTypes,
+	BOOLEAN: BooleanTypes,
 	MEASURE: NumberTypes,
-	DIMENSION: TextTypes.concat(DateTypes),
-	DISCRETE: TextTypes,
+	DIMENSION: TextTypes.concat(DateTypes).concat(BooleanTypes),
+	DISCRETE: TextTypes.concat(BooleanTypes),
 	CONTINUOUS: NumberTypes.concat(DateTypes),
 }
 
@@ -28,9 +30,10 @@ export const COLUMN_TYPES = [
 	{ label: __('Datetime'), value: 'Datetime' },
 	{ label: __('JSON'), value: 'JSON' },
 	{ label: __('Array'), value: 'Array' },
+	{ label: __('Boolean'), value: 'Boolean' },
 ] as const
 
-export const FILTER_TYPES = ['String', 'Number', 'Date'] as const
+export const FILTER_TYPES = ['String', 'Number', 'Date', 'Boolean'] as const
 export type FilterType = typeof FILTER_TYPES[number]
 
 export const joinTypes = [

@@ -80,6 +80,7 @@ const FILTER_TYPES = {
 	String: FIELDTYPES.TEXT,
 	Number: FIELDTYPES.NUMBER,
 	Date: FIELDTYPES.DATE,
+	Boolean: FIELDTYPES.BOOLEAN,
 }
 function disableColumnOptions(options: ColumnOption[]) {
 	return options.map((o) => {
@@ -248,6 +249,15 @@ function saveEdit() {
 									v-model:operator="filter.default_operator"
 									v-model:value="filter.default_value as number"
 								/>
+								<template v-else-if="filter.filter_type === 'Boolean'">
+									<FormControl
+										type="select"
+										:placeholder="__('Select operator...')"
+										:modelValue="filter.default_operator"
+										:options="defaultOperatorOptions"
+										@update:modelValue="onDefaultOperatorChange($event)"
+									/>
+								</template>
 								<template v-else>
 									<div class="flex gap-2 items-start">
 										<FormControl

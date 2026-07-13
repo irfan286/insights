@@ -404,6 +404,13 @@ export function getDonutChartOptions(config: DonutChartConfig, result: QueryResu
 
 	const colors = getColors()
 
+	const show_value = config.label_display === 'Value'
+	const use_short_number = config.short_number ?? false
+
+	function formatValue(value: number) {
+		return use_short_number ? getShortNumber(value, 1) : formatNumber(value, 2)
+	}
+
 	let center, radius, top, left, right, bottom, padding, orient
 	const legend_position = config.legend_position || 'bottom'
 	const show_inline_labels = config.show_inline_labels || false
@@ -469,7 +476,9 @@ export function getDonutChartOptions(config: DonutChartConfig, result: QueryResu
 				label: {
 					show: show_inline_labels,
 					formatter: ({ value, name }: any) => {
-						const percentage = total > 0 ? (value[1] / total) * 100 : 0
+						const val = value[1]
+						const percentage = total > 0 ? (val / total) * 100 : 0
+						if (show_value) return `${ellipsis(name, 20)} (${formatValue(val)})`
 						return `${ellipsis(name, 20)} (${percentage.toFixed(0)}%)`
 					},
 				},
@@ -487,7 +496,9 @@ export function getDonutChartOptions(config: DonutChartConfig, result: QueryResu
 					orient,
 					formatter: (name: string) => {
 						const labelIndex = labels.indexOf(name)
-						const percentage = total > 0 ? (values[labelIndex] / total) * 100 : 0
+						const val = values[labelIndex]
+						const percentage = total > 0 ? (val / total) * 100 : 0
+						if (show_value) return `${ellipsis(name, 20)} (${formatValue(val)})`
 						return `${ellipsis(name, 20)} (${percentage.toFixed(0)}%)`
 					},
 			  }
@@ -500,6 +511,7 @@ export function getDonutChartOptions(config: DonutChartConfig, result: QueryResu
 			appendToBody: false,
 			valueFormatter: (value: number) => {
 				const percent = (value / total) * 100
+				if (show_value) return `${formatValue(value)} (${percent.toFixed(0)}%)`
 				return `${formatNumber(value, 2)} (${percent.toFixed(0)}%)`
 			},
 		},
@@ -528,11 +540,17 @@ function getDonutChartData(
 		return acc
 	}, {} as Record<string, number>)
 
-	const sortedLabels = Object.keys(valueByLabel).sort((a, b) => valueByLabel[b] - valueByLabel[a])
+	const absValueByLabel = Object.fromEntries(
+		Object.entries(valueByLabel).map(([label, value]) => [label, Math.abs(value)]),
+	)
+
+	const sortedLabels = Object.keys(absValueByLabel).sort(
+		(a, b) => absValueByLabel[b] - absValueByLabel[a],
+	)
 	const topLabels = sortedLabels.slice(0, maxSlices)
 	const others = sortedLabels.slice(maxSlices)
-	const topData = topLabels.map((label) => [label, valueByLabel[label]])
-	const othersTotal = others.reduce((acc, label) => acc + valueByLabel[label], 0)
+	const topData = topLabels.map((label) => [label, absValueByLabel[label]])
+	const othersTotal = others.reduce((acc, label) => acc + absValueByLabel[label], 0)
 
 	if (othersTotal) {
 		topData.push(['Others', othersTotal])

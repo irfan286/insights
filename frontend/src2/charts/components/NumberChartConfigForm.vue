@@ -117,6 +117,22 @@ function setNumberOption(index: number, option: keyof NumberColumnOptions, value
 										/>
 									</InlineFormControlLabel>
 
+									<InlineFormControlLabel label="Font Size">
+										<FormControl
+											type="select"
+											:options="[
+												{ label: 'Small', value: 'sm' },
+												{ label: 'Medium', value: 'md' },
+												{ label: 'Large (Default)', value: 'lg' },
+												{ label: 'X-Large', value: 'xl' },
+												{ label: '2X-Large', value: '2xl' },
+											]"
+											:modelValue="getNumberOption(index, 'font_size') || 'lg'"
+											@update:modelValue="
+												setNumberOption(index, 'font_size', $event)
+											"
+										/>
+									</InlineFormControlLabel>
 									<Toggle
 										label="Show short numbers"
 										:modelValue="getNumberOption(index, 'shorten_numbers')"

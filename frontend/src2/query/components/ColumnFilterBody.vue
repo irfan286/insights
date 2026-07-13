@@ -2,6 +2,7 @@
 import { FIELDTYPES } from '../../helpers/constants'
 import { computed, reactive } from 'vue'
 import { FilterOperator, FilterValue, QueryResultColumn } from '../../types/query.types'
+import ColumnFilterTypeBoolean from './ColumnFilterTypeBoolean.vue'
 import ColumnFilterTypeDate from './ColumnFilterTypeDate.vue'
 import ColumnFilterTypeNumber from './ColumnFilterTypeNumber.vue'
 import ColumnFilterTypeText from './ColumnFilterTypeText.vue'
@@ -19,6 +20,7 @@ const props = defineProps<{
 const isText = computed(() => FIELDTYPES.TEXT.includes(props.column.type))
 const isNumber = computed(() => FIELDTYPES.NUMBER.includes(props.column.type))
 const isDate = computed(() => FIELDTYPES.DATE.includes(props.column.type))
+const isBoolean = computed(() => FIELDTYPES.BOOLEAN.includes(props.column.type))
 
 const initialFilter = {
 	operator: '=' as FilterOperator,
@@ -28,6 +30,7 @@ const newFilter = reactive({ ...initialFilter })
 
 const isValidFilter = computed(() => {
 	if (!newFilter.operator) return false
+	if (isBoolean.value) return true
 	if (isText.value && newFilter.operator.includes('set')) return true
 
 	if (!newFilter.value) return false
@@ -42,6 +45,9 @@ const isValidFilter = computed(() => {
 })
 
 function processFilter(operator: FilterOperator, value: FilterValue) {
+	if (isBoolean.value) {
+		return [operator, null]
+	}
 	if (isNumber.value && Array.isArray(value)) {
 		// convert to string so that 0 is not considered as falsy
 		value = value.map((v) => (!isNaN(v) ? String(v) : v))
@@ -84,8 +90,14 @@ function confirmFilter() {
 
 <template>
 	<div class="flex flex-col gap-2 px-2.5 py-2">
+		<ColumnFilterTypeBoolean
+			v-if="isBoolean"
+			class="w-[15rem]"
+			:model-value="newFilter"
+			@update:model-value="Object.assign(newFilter, $event)"
+		/>
 		<ColumnFilterTypeNumber
-			v-if="isNumber"
+			v-else-if="isNumber"
 			class="w-[15rem]"
 			:column="props.column"
 			:model-value="newFilter"

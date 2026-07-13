@@ -75,6 +75,16 @@ const valueOptions = computed(() => {
 			/>
 		</div>
 
+		<div>
+			<label class="mb-1.5 block text-xs text-gray-600">Label Display</label>
+			<Autocomplete
+				v-model="options.labelDisplay"
+				:options="['Percentage', 'Value']"
+				placeholder="Percentage"
+			/>
+		</div>
+
+		<Checkbox v-model="options.shortNumber" label="Short Number" />
 		<Checkbox v-model="options.inlineLabels" label="Inline Labels" />
 		<Checkbox v-model="options.scrollLabels" label="Paginate Labels" />
 	</div>

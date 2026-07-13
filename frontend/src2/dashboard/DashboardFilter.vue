@@ -23,6 +23,7 @@ const FILTER_TYPES = {
 	String: FIELDTYPES.TEXT,
 	Number: FIELDTYPES.NUMBER,
 	Date: FIELDTYPES.DATE,
+	Boolean: FIELDTYPES.BOOLEAN,
 }
 
 const sourceColumn = computed(() => {
@@ -59,11 +60,22 @@ wheneverChanges(
 
 const label = computed(() => {
 	let _label = filter.filter_name
-	if (filterState.operator && filterState.value) {
-		const value_str = Array.isArray(filterState.value)
-			? filterState.value.join(', ')
-			: filterState.value
-		_label += ` ${filterState.operator} ${value_str}`
+	if (filterState.operator) {
+		const booleanLabelMap: Record<string, string> = {
+			is_true: ': True',
+			is_false: ': False',
+			is_not_true: ': Not True',
+			is_set: ': Set',
+			is_not_set: ': Not Set',
+		}
+		if (filterState.operator in booleanLabelMap) {
+			_label += booleanLabelMap[filterState.operator]
+		} else if (filterState.value) {
+			const value_str = Array.isArray(filterState.value)
+				? filterState.value.join(', ')
+				: filterState.value
+			_label += ` ${filterState.operator} ${value_str}`
+		}
 	}
 	return _label
 })

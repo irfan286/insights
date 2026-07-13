@@ -5,6 +5,7 @@ import {
 	Brackets,
 	Calendar,
 	CalendarClock,
+	CheckSquare,
 	Clock,
 	Hash,
 	ShieldQuestion,
@@ -35,6 +36,8 @@ const icon = computed(() => {
 			return Baseline
 		case 'Auto':
 			return Baseline
+		case 'Boolean':
+			return CheckSquare
 		default:
 			return ShieldQuestion
 	}

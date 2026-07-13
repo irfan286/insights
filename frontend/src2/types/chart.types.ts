@@ -93,6 +93,7 @@ export type NumberColumnOptions = {
 	prefix?: string
 	suffix?: string
 	color?: string
+	font_size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'
 }
 
 export type DonutChartConfig = {
@@ -101,6 +102,8 @@ export type DonutChartConfig = {
 	legend_position?: 'top' | 'bottom' | 'left' | 'right'
 	max_slices?: number
 	show_inline_labels?: boolean
+	label_display?: 'Percentage' | 'Value'
+	short_number?: boolean
 }
 export type FunnelChartConfig = {
 	label_column: Dimension

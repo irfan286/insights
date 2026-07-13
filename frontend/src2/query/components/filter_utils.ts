@@ -9,6 +9,13 @@ import {
 
 export function getOperatorOptions(filterType: FilterType) {
 	const options = [] as { label: string; value: FilterOperator }[]
+	if (filterType === 'Boolean') {
+		options.push({ label: __('is true'), value: 'is_true' })
+		options.push({ label: __('is false'), value: 'is_false' })
+		options.push({ label: __('is not true (false or null)'), value: 'is_not_true' })
+		options.push({ label: __('is set'), value: 'is_set' })
+		options.push({ label: __('is not set'), value: 'is_not_set' })
+	}
 	if (filterType === 'String') {
 		options.push({ label: __('is'), value: 'in' }) // value selector
 		options.push({ label: __('is not'), value: 'not_in' }) // value selector
@@ -46,7 +53,7 @@ export function getOperatorOptions(filterType: FilterType) {
 }
 
 export function getValueSelectorType(operator: FilterOperator, filterType: FilterType) {
-	if (['is_set', 'is_not_set'].includes(operator)) return
+	if (['is_set', 'is_not_set', 'is_true', 'is_false', 'is_not_true'].includes(operator)) return
 
 	if (filterType === 'String') {
 		return ['in', 'not_in'].includes(operator) ? 'select' : 'text'
@@ -65,6 +72,7 @@ export function isFilterExpressionValid(filter: FilterExpression) {
 }
 
 export function getFilterType(columnType: ColumnDataType): FilterType {
+	if (FIELDTYPES.BOOLEAN.includes(columnType)) return 'Boolean'
 	if (FIELDTYPES.TEXT.includes(columnType)) return 'String'
 	if (FIELDTYPES.NUMBER.includes(columnType)) return 'Number'
 	if (FIELDTYPES.DATE.includes(columnType)) return 'Date'
@@ -80,6 +88,11 @@ export function isFilterValid(filter: FilterRule, filterType: FilterType) {
 	}
 
 	const valueSelectorType = getValueSelectorType(filter.operator, filterType)
+
+	// boolean operators need no value
+	if (filterType === 'Boolean') {
+		return true
+	}
 
 	// if selector type is none, no need to validate
 	if (!valueSelectorType) {

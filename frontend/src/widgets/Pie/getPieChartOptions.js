@@ -1,4 +1,4 @@
-import { ellipsis, formatNumber } from '@/utils'
+import { ellipsis, formatNumber, getShortNumber } from '@/utils'
 import { getColors } from '@/utils/colors'
 
 export default function getPieChartOptions(labels, dataset, options) {
@@ -77,7 +77,15 @@ export default function getPieChartOptions(labels, dataset, options) {
 		}
 	}
 
-	function formatLabel({ name, percent }) {
+	const showValue = options.labelDisplay === 'Value'
+	const useShortNumber = options.shortNumber
+
+	function formatValue(value) {
+		return useShortNumber ? getShortNumber(value, 1) : formatNumber(value, 2)
+	}
+
+	function formatLabel({ name, value, percent }) {
+		if (showValue) return `${ellipsis(name, 20)} (${formatValue(value)})`
 		return `${ellipsis(name, 20)} (${percent.toFixed(0)}%)`
 	}
 
@@ -89,17 +97,21 @@ export default function getPieChartOptions(labels, dataset, options) {
 			const otherSlicesTotal = dataset.data
 				.slice(parseInt(options.maxSlices) || MAX_SLICES)
 				.reduce((a, b) => a + b, 0)
+			if (showValue) return `${ellipsis(name, 20)} (${formatValue(otherSlicesTotal)})`
 			const percent = (otherSlicesTotal / total) * 100
 			return `${ellipsis(name, 20)} (${percent.toFixed(0)}%)`
 		}
 
-		const percent = (dataset.data[labelIndex] / total) * 100
+		const value = dataset.data[labelIndex]
+		if (showValue) return `${ellipsis(name, 20)} (${formatValue(value)})`
+		const percent = (value / total) * 100
 		return `${ellipsis(name, 20)} (${percent.toFixed(0)}%)`
 	}
 
-	function appendPercentage(value) {
+	function formatTooltipValue(value) {
 		let total = dataset.data.reduce((a, b) => a + b, 0)
 		const percent = (value / total) * 100
+		if (showValue) return `${formatValue(value)} (${percent.toFixed(0)}%)`
 		return `${formatNumber(value, 2)} (${percent.toFixed(0)}%)`
 	}
 
@@ -135,7 +147,7 @@ export default function getPieChartOptions(labels, dataset, options) {
 			trigger: 'item',
 			confine: true,
 			appendToBody: false,
-			valueFormatter: appendPercentage,
+			valueFormatter: formatTooltipValue,
 		},
 		legend: !options.inlineLabels
 			? {
