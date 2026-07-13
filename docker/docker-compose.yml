@@ -32,15 +32,34 @@ services:
 
   queue-short:
     <<: *common
-    command: bench worker --queue short,default
+    command:
+      - /home/frappe/frappe-bench/env/bin/python
+      - -m
+      - frappe.utils.bench_helper
+      - frappe
+      - worker
+      - --queue
+      - short,default
 
   queue-long:
     <<: *common
-    command: bench worker --queue long,default,short
+    command:
+      - /home/frappe/frappe-bench/env/bin/python
+      - -m
+      - frappe.utils.bench_helper
+      - frappe
+      - worker
+      - --queue
+      - long,default,short
 
   scheduler:
     <<: *common
-    command: bench schedule
+    command:
+      - /home/frappe/frappe-bench/env/bin/python
+      - -m
+      - frappe.utils.bench_helper
+      - frappe
+      - schedule
 
   frontend:
     image: frappe/frappe-nginx:version-15
