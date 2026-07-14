@@ -116,6 +116,10 @@
    "write": 1
   },
   {
+   "read": 1,
+   "role": "Insights Viewer"
+  },
+  {
    "create": 1,
    "delete": 1,
    "email": 1,

@@ -184,6 +184,10 @@
    "read": 1,
    "role": "Insights User",
    "share": 1
+  },
+  {
+   "read": 1,
+   "role": "Insights Viewer"
   }
  ],
  "row_format": "Dynamic",
