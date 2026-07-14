@@ -286,7 +286,17 @@ class InsightsQueryv3(Document):
             reference_doctype=self.doctype,
             reference_name=self.name,
         )
-        return result[column_name].tolist()
+        # Deduplicate in Python as a safety net: some DB backends (e.g. MariaDB)
+        # can return duplicate rows when ibis applies LIMIT inside a DISTINCT
+        # subquery, causing the head() to cut before dedup is complete.
+        values = result[column_name].tolist()
+        seen = set()
+        unique_values = []
+        for v in values:
+            if v not in seen:
+                seen.add(v)
+                unique_values.append(v)
+        return unique_values
 
     @insights_whitelist()
     def get_columns_for_selection(self, active_operation_idx: int | None = None):
