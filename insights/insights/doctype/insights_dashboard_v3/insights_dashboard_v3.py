@@ -257,7 +257,7 @@ def get_page_preview(url: str, headers: dict | None = None) -> bytes:
         json={
             "url": url,
             "headers": headers or {},
-            "wait_for": 1000,
+            "wait_for": 10000,
         },
     )
     if response.status_code == 200:
