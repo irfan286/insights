@@ -2,14 +2,54 @@ import { areDeeplyEqual, createTaskRunner, safeJSONParse } from '@/utils'
 import { convertResultToObjects, guessChart } from '@/widgets/useChartData'
 import { watchDebounced } from '@vueuse/core'
 import { call, createDocumentResource } from 'frappe-ui'
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
 export default function useQueryChart(chartName, queryTitle, queryResults) {
 	const resource = getChartResource(chartName)
 	resource.get.fetch()
 
+	// Local editing state — never overwritten by server responses.
+	// resource.doc is only used as the server-synced baseline (for dirty detection
+	// via resource.originalDoc). All UI mutations go through these local refs so
+	// that in-flight saves don't clobber the user's current edits.
+	const localOptions = ref(null)
+	const localChartType = ref(null)
+
+	// Initialise local state once when the server doc first arrives.
+	watch(
+		() => resource.doc,
+		(doc) => {
+			if (doc && localOptions.value === null) {
+				localChartType.value = doc.chart_type
+				localOptions.value = doc.options ? JSON.parse(JSON.stringify(doc.options)) : {}
+			}
+		},
+		{ immediate: true }
+	)
+
+	// chart.doc exposes the merged view: local editing state for options/chart_type,
+	// passthrough to resource.doc for all other server-managed fields.
+	// The getter/setter property descriptors make v-model and direct assignments
+	// (e.g. chart.doc.options = {}) update localOptions/localChartType correctly.
 	const chart = reactive({
-		doc: computed(() => resource.doc || {}),
+		doc: computed(() => {
+			const base = resource.doc || {}
+			return {
+				...base,
+				get chart_type() {
+					return localChartType.value ?? base.chart_type
+				},
+				set chart_type(v) {
+					localChartType.value = v
+				},
+				get options() {
+					return localOptions.value ?? base.options
+				},
+				set options(v) {
+					localOptions.value = v
+				},
+			}
+		}),
 		data: computed(() => convertResultToObjects(queryResults.formattedResults)),
 		togglePublicAccess,
 		addToDashboard,
@@ -19,23 +59,27 @@ export default function useQueryChart(chartName, queryTitle, queryResults) {
 	})
 
 	const run = createTaskRunner()
+	// Watch local refs so server responses (which overwrite resource.doc) never
+	// accidentally trigger or suppress a save.
 	watchDebounced(
 		() => ({
-			chart_type: chart.doc.chart_type,
-			options: chart.doc.options,
+			chart_type: localChartType.value,
+			options: localOptions.value,
 		}),
 		_updateDoc,
 		{ deep: true, debounce: 1000 }
 	)
+
 	async function _updateDoc(newDoc) {
 		const ogDoc = resource.originalDoc
+		if (!ogDoc) return
 		const chartTypeChanged = newDoc.chart_type != ogDoc.chart_type
 		const optionsChanged = !areDeeplyEqual(newDoc.options, ogDoc.options)
 		if (!chartTypeChanged && !optionsChanged) return
 
 		let newOptions = { ...newDoc.options }
 		if (!newOptions.query) {
-			newOptions.query = chart.doc.query
+			newOptions.query = resource.doc?.query
 		}
 
 		if (chartTypeChanged && newDoc.chart_type != 'Auto') {
@@ -47,7 +91,7 @@ export default function useQueryChart(chartName, queryTitle, queryResults) {
 	}
 
 	function _save(chartDoc) {
-		chartDoc.options.query = chart.doc.query
+		chartDoc.options.query = resource.doc?.query
 		return run(() =>
 			resource.setValue.submit({
 				title: chartDoc.options.title || queryTitle,
@@ -59,7 +103,7 @@ export default function useQueryChart(chartName, queryTitle, queryResults) {
 
 	function getGuessedChart(chart_type) {
 		if (!queryResults.formattedResults.length) return
-		chart_type = chart_type || chart.doc.chart_type
+		chart_type = chart_type || localChartType.value
 		const recommendedChart = guessChart(queryResults.formattedResults, chart_type)
 		return {
 			chart_type: recommendedChart?.type,
@@ -84,7 +128,7 @@ export default function useQueryChart(chartName, queryTitle, queryResults) {
 	async function addToDashboard(dashboardName) {
 		if (!dashboardName || !resource.doc.name || resource.addingToDashboard) return
 		resource.addingToDashboard = true
-		if (chart.doc.chart_type == 'Auto') {
+		if (localChartType.value == 'Auto') {
 			const guessedChart = getGuessedChart()
 			await _save({
 				chart_type: guessedChart.chart_type,
@@ -99,13 +143,12 @@ export default function useQueryChart(chartName, queryTitle, queryResults) {
 	}
 
 	function resetOptions() {
-		state.doc.chart_type = undefined
-		state.doc.options = {}
+		localChartType.value = undefined
+		localOptions.value = {}
 	}
 
 	async function deleteChart() {
-		state.deleting = true
-		return run(() => resource.delete.submit().then(() => (state.deleting = false)))
+		return run(() => resource.delete.submit())
 	}
 
 	return chart
