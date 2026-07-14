@@ -76,10 +76,11 @@ FROM build AS builder
 
 ARG FRAPPE_BRANCH=version-15
 ARG FRAPPE_PATH=https://github.com/frappe/frappe
+ARG CACHE_BUST=""
 
 COPY --chown=frappe:frappe docker/apps.json /opt/frappe/apps.json
 
-RUN bench init \
+RUN : "${CACHE_BUST}" && bench init \
     --frappe-branch=${FRAPPE_BRANCH} \
     --frappe-path=${FRAPPE_PATH} \
     --apps_path=/opt/frappe/apps.json \
