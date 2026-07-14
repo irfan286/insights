@@ -254,6 +254,8 @@ class InsightsQueryv3(Document):
 
         if format == "excel":
             output = BytesIO()
+            for col in results.select_dtypes(include=["datetimetz"]).columns:
+                results[col] = results[col].dt.tz_localize(None)
             results.to_excel(output, index=False, engine="openpyxl")
             excel_data = output.getvalue()
             return base64.b64encode(excel_data).decode("utf-8")
