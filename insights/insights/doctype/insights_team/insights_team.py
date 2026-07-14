@@ -246,6 +246,9 @@ def check_data_source_permission(source_name, user=None, raise_error=True):
     if is_admin(user):
         return True
 
+    if "Insights Viewer" in frappe.get_roles(user):
+        return True
+
     allowed_sources = get_allowed_resources_for_user("Insights Data Source v3", user)
 
     if source_name not in allowed_sources:
@@ -268,6 +271,9 @@ def check_table_permission(data_source, table, user=None, raise_error=True):
 
     user = user or frappe.session.user
     if is_admin(user):
+        return True
+
+    if "Insights Viewer" in frappe.get_roles(user):
         return True
 
     table_name = get_table_name(data_source, table)
