@@ -244,6 +244,8 @@ class InsightsQueryv3(Document):
             if max_rows:
                 ibis_query = ibis_query.limit(max_rows)
 
+        import time
+        t0 = time.time()
         results, _ = execute_ibis_query(
             ibis_query,
             cache=False,
@@ -251,12 +253,25 @@ class InsightsQueryv3(Document):
             reference_doctype=self.doctype,
             reference_name=self.name,
         )
+        t1 = time.time()
+        frappe.log_error(f"[download_results] query fetch: {t1 - t0:.2f}s | rows: {len(results)}")
 
         if format == "excel":
-            output = BytesIO()
+            from openpyxl import Workbook
+
             for col in results.select_dtypes(include=["datetimetz"]).columns:
                 results[col] = results[col].dt.tz_localize(None)
-            results.to_excel(output, index=False, engine="openpyxl")
+
+            output = BytesIO()
+            wb = Workbook(write_only=True)
+            ws = wb.create_sheet()
+            rows = [list(results.columns)] + results.values.tolist()
+            for row in rows:
+                ws.append(row)
+            wb.save(output)
+
+            t2 = time.time()
+            frappe.log_error(f"[download_results] excel write: {t2 - t1:.2f}s | total: {t2 - t0:.2f}s")
             excel_data = output.getvalue()
             return base64.b64encode(excel_data).decode("utf-8")
         else:
