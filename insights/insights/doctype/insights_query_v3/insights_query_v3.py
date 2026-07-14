@@ -240,7 +240,9 @@ class InsightsQueryv3(Document):
             ibis_query = ibis_query.mutate(**decimal_casts)
 
         if hasattr(ibis_query, "limit"):
-            ibis_query = ibis_query.limit(100_000)
+            max_rows = frappe.db.get_single_value("Insights Settings", "max_download_rows") or 100_000
+            if max_rows:
+                ibis_query = ibis_query.limit(max_rows)
 
         results, _ = execute_ibis_query(
             ibis_query,

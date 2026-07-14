@@ -9,6 +9,7 @@
   "onboarding_section",
   "enable_permissions",
   "allow_download",
+  "max_download_rows",
   "enable_data_store",
   "apply_user_permissions",
   "allowed_origins",
@@ -80,6 +81,14 @@
    "fieldname": "allow_download",
    "fieldtype": "Check",
    "label": "Allow Data Download"
+  },
+  {
+   "default": "100000",
+   "description": "Maximum number of rows to export when downloading data. Set to 0 for no limit.",
+   "fieldname": "max_download_rows",
+   "fieldtype": "Int",
+   "label": "Max Download Rows",
+   "non_negative": 1
   },
   {
    "fieldname": "integrations_section",
