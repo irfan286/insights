@@ -257,18 +257,22 @@ class InsightsQueryv3(Document):
         frappe.log_error(f"[download_results] query fetch: {t1 - t0:.2f}s | rows: {len(results)}")
 
         if format == "excel":
-            from openpyxl import Workbook
+            import xlsxwriter
 
             for col in results.select_dtypes(include=["datetimetz"]).columns:
                 results[col] = results[col].dt.tz_localize(None)
 
+            # replace NaN with None once at numpy level, then dump to plain Python list
+            results = results.astype(object).where(results.notna(), other=None)
+            data = results.values.tolist()
+
             output = BytesIO()
-            wb = Workbook(write_only=True)
-            ws = wb.create_sheet()
-            rows = [list(results.columns)] + results.values.tolist()
-            for row in rows:
-                ws.append(row)
-            wb.save(output)
+            wb = xlsxwriter.Workbook(output, {"constant_memory": True, "in_memory": True})
+            ws = wb.add_worksheet()
+            ws.write_row(0, 0, results.columns.tolist())
+            for row_idx, row in enumerate(data, start=1):
+                ws.write_row(row_idx, 0, row)
+            wb.close()
 
             t2 = time.time()
             frappe.log_error(f"[download_results] excel write: {t2 - t1:.2f}s | total: {t2 - t0:.2f}s")
