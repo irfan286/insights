@@ -171,6 +171,13 @@ class InsightsQueryv3(Document):
             reference_doctype=self.doctype,
             reference_name=self.name,
         )
+        import pandas as pd
+        import ibis.expr.datatypes as dt
+
+        for col, dtype in ibis_query.schema().items():
+            if dtype.is_date() and col in results.columns:
+                not_null = results[col].notna()
+                results[col] = pd.to_datetime(results[col], errors="coerce").dt.strftime("%Y-%m-%d").where(not_null, other=None)
         results = results.to_dict(orient="records")
 
         columns = get_columns_from_schema(ibis_query.schema())
