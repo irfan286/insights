@@ -12,6 +12,7 @@ import { Query } from '../../query/query'
 import { QueryResultColumn } from '../../types/query.types'
 import { Dashboard } from '../../dashboard/dashboard'
 import { __ } from '../../translation'
+import session from '../../session'
 
 const props = defineProps<{ query: Query }>()
 
@@ -70,7 +71,7 @@ const groupBy = debounce(_groupBy, 50)
 				class="relative flex h-[32rem] w-full flex-1 gap-4 overflow-hidden bg-white"
 			>
 				<div class="flex h-full flex-1 flex-col gap-2 overflow-hidden p-0.5">
-					<QueryToolbar>
+					<QueryToolbar v-if="!session.user.is_viewer">
 						<QueryExecutionStatus />
 					</QueryToolbar>
 					<div class="flex flex-1 overflow-hidden rounded border">
@@ -79,7 +80,7 @@ const groupBy = debounce(_groupBy, 50)
 							:enable-drill-down="true"
 							:query="props.query"
 						>
-							<template #header-prefix="{ column }">
+							<template v-if="!session.user.is_viewer" #header-prefix="{ column }">
 								<Tooltip text="Group By" :hover-delay="0.2">
 									<Button
 										variant="ghost"
@@ -99,6 +100,7 @@ const groupBy = debounce(_groupBy, 50)
 					</div>
 				</div>
 				<div
+					v-if="!session.user.is_viewer"
 					class="relative flex h-full w-[17rem] flex-shrink-0 overflow-y-auto rounded border bg-white"
 				>
 					<QueryOperations />
