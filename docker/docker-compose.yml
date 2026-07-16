@@ -30,6 +30,8 @@ services:
         bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
         bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
         bench set-config -gp socketio_port $$SOCKETIO_PORT;
+        cp /home/frappe/frappe-bench/assets.json.baked /home/frappe/frappe-bench/sites/assets/assets.json 2>/dev/null || true;
+        python3 -c "import redis,os; r=redis.from_url('redis://'+os.environ.get('REDIS_CACHE','redis-cache:6379')); r.delete('assets_json'); print('Redis assets_json cleared')" 2>/dev/null || true;
     environment:
       DB_HOST: db
       DB_PORT: "3306"

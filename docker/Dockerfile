@@ -104,6 +104,9 @@ COPY --from=builder --chown=frappe:frappe /home/frappe/frappe-bench /home/frappe
 
 WORKDIR /home/frappe/frappe-bench
 
+# Save assets.json outside the sites volume so configurator can restore it on each deploy
+RUN cp sites/assets/assets.json assets.json.baked 2>/dev/null || true
+
 VOLUME [ \
     "/home/frappe/frappe-bench/sites", \
     "/home/frappe/frappe-bench/sites/assets", \
