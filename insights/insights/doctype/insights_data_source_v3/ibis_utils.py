@@ -401,6 +401,9 @@ class IbisQueryBuilder:
 
             filter_value = [start, end]
 
+        if right_column is None and left.type().is_boolean() and isinstance(filter_value, str):
+            filter_value = filter_value.lower() in ("true", "1", "yes")
+
         right_value = right_column if right_column is not None else filter_value
         return operator_fn(left, right_value)
 
