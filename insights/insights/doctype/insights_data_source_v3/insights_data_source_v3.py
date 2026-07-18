@@ -439,9 +439,18 @@ class InsightsDataSourcev3(InsightsDataSourceDocument, Document):
 
     def get_ibis_table(self, table_name):
         remote_db = self._get_ibis_backend()
-        if self.database_type == "PostgreSQL" and "." in table_name:
-            schema, table = table_name.split(".")
-            return remote_db.table(table, database=schema)
+        if self.database_type == "PostgreSQL":
+            if "." in table_name:
+                schema, table = table_name.split(".", 1)
+                return remote_db.table(table, database=schema)
+            # legacy format: schema__table (double underscore)
+            if "__" in table_name:
+                parts = table_name.split("__", 1)
+                schema, table = parts[0], parts[1]
+                try:
+                    return remote_db.table(table, database=schema)
+                except Exception:
+                    pass
         if self.type == "REST API":
             return remote_db.table(table_name, database=self.schema)
         return remote_db.table(table_name)
