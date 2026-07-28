@@ -305,6 +305,18 @@ function makeChart(name: string) {
 			return
 		}
 
+		// Without a pivot or any measures, `summarize` only groups the rows
+		// with no aggregate function, which is an expensive way to say
+		// "show these columns as-is". `show_raw_rows` skips that GROUP BY
+		// and selects the row columns directly. Defaults to off so existing
+		// charts keep their current (deduplicated) output unchanged.
+		if (!values.length && config.show_raw_rows) {
+			query.selectColumns({
+				column_names: rows.map((r) => r.column_name),
+			})
+			return
+		}
+
 		query.addSummarize({
 			measures: values,
 			dimensions: rows,

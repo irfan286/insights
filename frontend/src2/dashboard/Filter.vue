@@ -29,7 +29,7 @@ const operatorOptions = computed(() => {
 
 const state = reactive(
 	copy({
-		operator: filterOperator.value || operatorOptions.value[0].value,
+		operator: filterOperator.value || operatorOptions.value[0]?.value,
 		value: filterValue.value,
 	}),
 )
@@ -91,6 +91,12 @@ const dateRangeVal = computed({
 			class="w-[200px]"
 			v-model:operator="state.operator"
 			v-model:value="state.value as number"
+		/>
+		<DatePicker
+			v-else-if="filterType === 'AsOfDate'"
+			class="w-[200px]"
+			:modelValue="state.value as string"
+			@update:modelValue="state.value = $event; state.operator = '<='; applyFilter()"
 		/>
 		<template v-else>
 			<div id="operator" class="!min-w-[200px] flex-1">

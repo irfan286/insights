@@ -152,6 +152,7 @@ const CastInfo = (props: any) => {
 
 const FilterInfo = (props: any) => {
 	const group = props.filter as FilterGroup
+	const nested_groups = group.filters.filter((f) => 'filters' in f)
 	const custom_expressions = group.filters.filter(
 		(f) => 'expression' in f && f.expression.expression,
 	)
@@ -167,6 +168,9 @@ const FilterInfo = (props: any) => {
 			))}
 			{custom_expressions.map((expression, idx) => (
 				<Element>expression</Element>
+			))}
+			{nested_groups.map((group, idx) => (
+				<Element>nested group</Element>
 			))}
 		</div>
 	)

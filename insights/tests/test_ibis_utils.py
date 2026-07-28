@@ -95,3 +95,131 @@ results = [
             self.build_query(operations)
 
         self.assertIn("Supported granularities: second, minute, hour", str(exc.exception))
+
+
+class TestIbisQueryBuilderNestedFilters(InsightsIntegrationTestCase):
+    def make_query_doc(self, operations):
+        return frappe._dict(
+            name="Ibis Nested Filter Test",
+            title="Ibis Nested Filter Test",
+            use_live_connection=0,
+            operations=frappe.as_json(operations),
+        )
+
+    def build_query(self, operations):
+        return IbisQueryBuilder(self.make_query_doc(operations)).build()
+
+    def make_scd2_source_operations(self):
+        # simulates an SCD2-style validity range table, where `valid_to` is
+        # NULL for the row that is currently in effect
+        return [
+            {
+                "type": "code",
+                "code": """
+results = [
+    {"item": "expired", "valid_from": "2024-01-01", "valid_to": "2024-06-01"},
+    {"item": "covers_as_of_date", "valid_from": "2024-01-01", "valid_to": "2024-12-01"},
+    {"item": "current_open_ended", "valid_from": "2024-01-01", "valid_to": None},
+    {"item": "not_yet_effective", "valid_from": "2025-01-01", "valid_to": None},
+]
+""",
+            },
+            {
+                "type": "cast",
+                "column": {"type": "column", "column_name": "valid_from"},
+                "data_type": "Date",
+            },
+            {
+                "type": "cast",
+                "column": {"type": "column", "column_name": "valid_to"},
+                "data_type": "Date",
+            },
+        ]
+
+    def make_as_of_filter_group(self, as_of_date):
+        return {
+            "type": "filter_group",
+            "logical_operator": "And",
+            "filters": [
+                {
+                    "column": {"type": "column", "column_name": "valid_from"},
+                    "operator": "<=",
+                    "value": as_of_date,
+                },
+                {
+                    "type": "filter_group",
+                    "logical_operator": "Or",
+                    "filters": [
+                        {
+                            "column": {"type": "column", "column_name": "valid_to"},
+                            "operator": ">",
+                            "value": as_of_date,
+                        },
+                        {
+                            "column": {"type": "column", "column_name": "valid_to"},
+                            "operator": "is_not_set",
+                            "value": "",
+                        },
+                    ],
+                },
+            ],
+        }
+
+    def test_nested_filter_group_resolves_scd2_as_of_date(self):
+        query = self.build_query(
+            [
+                *self.make_scd2_source_operations(),
+                self.make_as_of_filter_group("2024-07-01"),
+            ]
+        )
+
+        result = query.execute()
+        self.assertEqual(
+            set(result["item"]),
+            {"covers_as_of_date", "current_open_ended"},
+        )
+
+    def test_nested_filter_group_supports_or_at_top_level(self):
+        # as-of date before every row's valid_from, so the nested SCD2 group
+        # matches nothing on its own — isolates this test to proving that a
+        # top-level "Or" combining a plain rule with a nested group works
+        query = self.build_query(
+            [
+                *self.make_scd2_source_operations(),
+                {
+                    "type": "filter_group",
+                    "logical_operator": "Or",
+                    "filters": [
+                        {
+                            "column": {"type": "column", "column_name": "item"},
+                            "operator": "=",
+                            "value": "expired",
+                        },
+                        self.make_as_of_filter_group("2023-01-01"),
+                    ],
+                },
+            ]
+        )
+
+        result = query.execute()
+        self.assertEqual(
+            set(result["item"]),
+            {"expired"},
+        )
+
+    def test_filter_group_nesting_beyond_max_depth_is_rejected(self):
+        deepest = {
+            "column": {"type": "column", "column_name": "item"},
+            "operator": "=",
+            "value": "expired",
+        }
+        nested = deepest
+        # each wrap adds one level of nesting; go well past the limit so the
+        # exact off-by-one at the boundary doesn't matter for this test
+        for _ in range(IbisQueryBuilder.MAX_FILTER_GROUP_DEPTH + 5):
+            nested = {"type": "filter_group", "logical_operator": "And", "filters": [nested]}
+
+        with self.assertRaises(frappe.ValidationError) as exc:
+            self.build_query([*self.make_scd2_source_operations(), nested])
+
+        self.assertIn("cannot be nested more than", str(exc.exception))

@@ -99,8 +99,10 @@ export type FilterRule = {
 	value: FilterValue | Column
 }
 export type FilterExpression = { expression: Expression }
-export type FilterArgs = FilterRule | FilterExpression
-export type Filter = { type: 'filter' } & FilterArgs
+export type FilterArgs = FilterRule | FilterExpression | FilterGroup
+// a standalone "filter" operation is always a single rule or expression —
+// nesting is only valid inside a filter_group's `filters` array
+export type Filter = { type: 'filter' } & (FilterRule | FilterExpression)
 
 export type FilterGroupArgs = { logical_operator: LogicalOperator; filters: FilterArgs[] }
 export type FilterGroup = { type: 'filter_group' } & FilterGroupArgs

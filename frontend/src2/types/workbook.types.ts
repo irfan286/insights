@@ -153,6 +153,7 @@ export type WorkbookDashboardFilter = {
 	filter_name: string
 	filter_type: FilterType
 	links: Record<string, string>
+	range_links?: Record<string, { start_column: string; end_column: string }>
 	default_operator?: FilterOperator
 	default_value?: FilterValue
 	icon?: string

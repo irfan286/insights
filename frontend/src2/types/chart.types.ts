@@ -116,6 +116,7 @@ export type TableChartConfig = {
 	columns: Dimension[]
 	values: Measure[]
 	max_column_values?: number
+	show_raw_rows?: boolean
 	show_filter_row?: boolean
 	show_row_totals?: boolean
 	show_column_totals?: boolean

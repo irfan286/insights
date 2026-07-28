@@ -41,6 +41,7 @@ function addFilter() {
 const areAllFiltersValid = computed(() => {
 	if (!filterGroup.filters.length) return true
 	return filterGroup.filters.every((filter) => {
+		if ('filters' in filter) return true
 		if ('expression' in filter) return isFilterExpressionValid(filter)
 
 		const options = flattenOptions(props.columnOptions) as ColumnOption[]

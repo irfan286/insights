@@ -51,6 +51,8 @@ class CircularQueryReferenceError(frappe.ValidationError):
 
 
 class IbisQueryBuilder:
+    MAX_FILTER_GROUP_DEPTH = 8
+
     def __init__(self, doc, active_operation_idx=None):
         self.doc = doc
         self.title = self.doc.title or self.doc.name
@@ -363,7 +365,14 @@ class IbisQueryBuilder:
         condition = self.make_filter_condition(filter_args)
         return self.query.filter(condition)
 
-    def make_filter_condition(self, filter_args):
+    def make_filter_condition(self, filter_args, _depth=0):
+        if filter_args.get("type") == "filter_group":
+            if _depth >= self.MAX_FILTER_GROUP_DEPTH:
+                frappe.throw(
+                    f"Filter groups cannot be nested more than {self.MAX_FILTER_GROUP_DEPTH} levels deep"
+                )
+            return self.combine_filter_conditions(filter_args, _depth + 1)
+
         if hasattr(filter_args, "expression") and filter_args.expression:
             return self.evaluate_expression(filter_args.expression.expression)
 
@@ -442,17 +451,22 @@ class IbisQueryBuilder:
         }[operator]
 
     def apply_filter_group(self, filter_group_args):
+        if not filter_group_args.filters:
+            return self.query
+        return self.query.filter(self.combine_filter_conditions(filter_group_args))
+
+    def combine_filter_conditions(self, filter_group_args, _depth=0):
         filters = filter_group_args.filters
         if not filters:
-            return self.query
+            return ibis.literal(True)
 
         logical_operator = filter_group_args.logical_operator
-        conditions = [self.make_filter_condition(filter) for filter in filters]
+        conditions = [self.make_filter_condition(filter, _depth) for filter in filters]
 
         if logical_operator == "And":
-            return self.query.filter(ibis.and_(*conditions))
+            return ibis.and_(*conditions)
         elif logical_operator == "Or":
-            return self.query.filter(ibis.or_(*conditions))
+            return ibis.or_(*conditions)
 
         frappe.throw(f"Logical operator {logical_operator} is not supported")
 

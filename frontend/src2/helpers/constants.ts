@@ -33,7 +33,7 @@ export const COLUMN_TYPES = [
 	{ label: __('Boolean'), value: 'Boolean' },
 ] as const
 
-export const FILTER_TYPES = ['String', 'Number', 'Date', 'Boolean'] as const
+export const FILTER_TYPES = ['String', 'Number', 'Date', 'Boolean', 'AsOfDate'] as const
 export type FilterType = typeof FILTER_TYPES[number]
 
 export const joinTypes = [

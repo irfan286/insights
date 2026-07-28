@@ -34,9 +34,11 @@ import {
 	Expression,
 	Filter,
 	FilterArgs,
+	FilterExpression,
 	FilterGroup,
 	FilterGroupArgs,
 	FilterOperator,
+	FilterRule,
 	FilterValue,
 	Join,
 	JoinArgs,
@@ -315,7 +317,7 @@ export const query_operation_types = {
 		icon: FilterIcon,
 		color: 'gray',
 		class: 'text-gray-600 bg-gray-100',
-		init: (args: FilterArgs): Filter => ({ type: 'filter', ...args }),
+		init: (args: FilterRule | FilterExpression): Filter => ({ type: 'filter', ...args }),
 		getDescription: (op: Filter) => {
 			// @ts-ignore
 			if (op.expression) return __('custom expression')
@@ -333,6 +335,7 @@ export const query_operation_types = {
 		getDescription: (op: FilterGroup) => {
 			if (!op.filters.length) return __('empty')
 			const columns = op.filters.map((f) => {
+				if ('filters' in f) return __('nested filter group')
 				if ('expression' in f) return __('custom expression')
 				return f.column.column_name
 			})

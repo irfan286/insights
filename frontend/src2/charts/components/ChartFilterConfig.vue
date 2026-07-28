@@ -31,6 +31,9 @@ function getColumnType(column_name: string) {
 	return column.data_type
 }
 function getFilterLabel(filter: FilterArgs) {
+	if ('filters' in filter) {
+		return 'Nested filter group'
+	}
 	if ('column' in filter) {
 		return `${filter.column.column_name} ${filter.operator} ${filter.value}`
 	}

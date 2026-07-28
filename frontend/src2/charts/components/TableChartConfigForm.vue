@@ -211,6 +211,12 @@ function updateTextWrap(column_name: string, wrap: boolean | undefined) {
 			>
 				+ Add column
 			</button>
+			<Toggle
+				v-if="!config.columns?.some((c) => c?.column_name) && !config.values?.some((v) => v?.measure_name)"
+				class="mt-3"
+				label="Show raw rows (skip grouping)"
+				v-model="config.show_raw_rows"
+			/>
 		</div>
 	</CollapsibleSection>
 

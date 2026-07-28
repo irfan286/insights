@@ -8,6 +8,8 @@ from insights.tests.factories import (
     DT,
     USER_1,
     cleanup_workbook_flow_fixtures,
+    create_test_chart,
+    create_test_dashboard,
     create_test_query,
     create_test_user,
     create_test_workbook,
@@ -183,6 +185,99 @@ class TestQuerying(InsightsIntegrationTestCase):
             ],
         )
         self.assertTrue(all(row["docstatus_plus_one"] == 1 for row in result["rows"]))
+
+    def test_query_pipeline_supports_nested_filter_group(self):
+        self.seed_todos()
+        workbook = create_test_workbook(USER_1)
+        query = create_test_query(
+            USER_1,
+            workbook.name,
+            title="Workbook Flow Test Nested Filter Group",
+            operations=[
+                table_source(),
+                {
+                    "type": "filter_group",
+                    "logical_operator": "And",
+                    "filters": [
+                        {
+                            "column": column("description"),
+                            "operator": "contains",
+                            "value": TODO_PREFIX,
+                        },
+                        {
+                            "type": "filter_group",
+                            "logical_operator": "Or",
+                            "filters": [
+                                {
+                                    "column": column("status"),
+                                    "operator": "=",
+                                    "value": "Closed",
+                                },
+                                {
+                                    "column": column("status"),
+                                    "operator": "=",
+                                    "value": "Nonexistent Status",
+                                },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "type": "order_by",
+                    "column": column("description"),
+                    "direction": "asc",
+                },
+            ],
+        )
+
+        result = execute_test_query(query.name)
+
+        self.assertEqual(
+            [row["description"] for row in result["rows"]],
+            [f"{TODO_PREFIX} Closed Beta"],
+        )
+
+    def test_dashboard_range_links_authorize_filter_columns(self):
+        self.seed_todos()
+        workbook = create_test_workbook(USER_1)
+        query = create_test_query(
+            USER_1,
+            workbook.name,
+            title="Workbook Flow Test Range Link Query",
+        )
+        chart = create_test_chart(USER_1, workbook.name, query=query.name)
+        dashboard = create_test_dashboard(USER_1, workbook.name, chart=chart.name)
+
+        with self.as_user(USER_1):
+            dashboard.items = [
+                {"id": "chart-1", "type": "chart", "chart": chart.name},
+                {
+                    "id": "filter-1",
+                    "type": "filter",
+                    "filter_name": "As Of Date",
+                    "filter_type": "AsOfDate",
+                    "links": {},
+                    "range_links": {
+                        chart.name: {
+                            "start_column": f"`{query.name}`.`date`",
+                            "end_column": f"`{query.name}`.`modified`",
+                        }
+                    },
+                    "layout": {"i": "filter-1", "x": 0, "y": 0, "w": 4, "h": 1},
+                },
+            ]
+            dashboard.save()
+
+            self.assertTrue(dashboard.is_filter_column(query.name, "date"))
+            self.assertTrue(dashboard.is_filter_column(query.name, "modified"))
+            self.assertFalse(dashboard.is_filter_column(query.name, "reference_type"))
+
+            with db_connections():
+                values = dashboard.get_distinct_column_values(query.name, "date")
+            self.assertIsInstance(values, list)
+
+            with self.assertRaises(frappe.PermissionError):
+                dashboard.get_distinct_column_values(query.name, "reference_type")
 
     def test_query_pipeline_supports_filter_and_join(self):
         self.seed_todos()

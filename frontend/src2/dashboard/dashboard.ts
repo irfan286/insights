@@ -107,6 +107,7 @@ function makeDashboard(name: string) {
 			filter_name: '',
 			filter_type: 'String',
 			links: {},
+			range_links: {},
 			layout: {
 				i: getUniqueId(),
 				x: 0,
@@ -222,7 +223,7 @@ function makeDashboard(name: string) {
 			(item) =>
 				item.type === 'filter' &&
 				'links' in item &&
-				item.links[chart_name] &&
+				(item.links[chart_name] || item.range_links?.[chart_name]) &&
 				(!exclude_filter_name || item.filter_name !== exclude_filter_name)
 		)
 
@@ -242,10 +243,47 @@ function makeDashboard(name: string) {
 
 		filtersApplied.forEach((item) => {
 			const filterItem = item as WorkbookDashboardFilter
+			const filterState = filterStates.value[filterItem.filter_name] || {}
+
+			if (filterItem.filter_type === 'AsOfDate') {
+				const rangeLink = filterItem.range_links?.[chart_name]
+				if (!rangeLink || !filterState.value) return
+
+				const startCol = getColumnFromFilterLink(rangeLink.start_column)
+				const endCol = getColumnFromFilterLink(rangeLink.end_column)
+				if (!startCol || !endCol) return
+
+				const asOfFilter = filter_group({
+					logical_operator: 'And',
+					filters: [
+						{
+							column: column(startCol.column),
+							operator: '<=',
+							value: filterState.value,
+						},
+						filter_group({
+							logical_operator: 'Or',
+							filters: [
+								{
+									column: column(endCol.column),
+									operator: '>',
+									value: filterState.value,
+								},
+								{
+									column: column(endCol.column),
+									operator: 'is_not_set',
+									value: '',
+								},
+							],
+						}),
+					],
+				})
+				addFilterToQuery(startCol.query, asOfFilter)
+				return
+			}
+
 			const linkedColumn = getColumnFromFilterLink(filterItem.links[chart_name])
 			if (!linkedColumn) return
-
-			const filterState = filterStates.value[filterItem.filter_name] || {}
 
 			const filter = {
 				column: column(linkedColumn.column),
@@ -285,9 +323,10 @@ function makeDashboard(name: string) {
 		if (!item) return
 
 		const filterItem = item as WorkbookDashboardFilter
-		const filteredCharts = Object.keys(filterItem.links).filter(
-			(chart_name) => filterItem.links[chart_name]
-		)
+		const filteredCharts = new Set([
+			...Object.keys(filterItem.links).filter((chart_name) => filterItem.links[chart_name]),
+			...Object.keys(filterItem.range_links || {}),
+		])
 		filteredCharts.forEach((chart_name) => refreshChart(chart_name))
 	}
 

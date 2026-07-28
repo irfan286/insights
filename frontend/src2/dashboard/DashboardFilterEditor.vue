@@ -22,6 +22,9 @@ const filter = reactive(copy(props.item))
 if (!filter.links) {
 	filter.links = {}
 }
+if (!filter.range_links) {
+	filter.range_links = {}
+}
 
 const tabIndex = ref(0)
 const tabs = [
@@ -67,12 +70,24 @@ const linkOptions = computed(() => {
 	})
 })
 
-const enabledLinks = computed(() => Object.keys(filter.links))
+const isAsOfDate = computed(() => filter.filter_type === 'AsOfDate')
+
+const enabledLinks = computed(() =>
+	isAsOfDate.value ? Object.keys(filter.range_links || {}) : Object.keys(filter.links)
+)
 function toggleLink(link: string) {
 	if (enabledLinks.value.includes(link)) {
-		delete filter.links[link]
+		if (isAsOfDate.value) {
+			delete filter.range_links![link]
+		} else {
+			delete filter.links[link]
+		}
 	} else {
-		filter.links[link] = ''
+		if (isAsOfDate.value) {
+			filter.range_links![link] = { start_column: '', end_column: '' }
+		} else {
+			filter.links[link] = ''
+		}
 	}
 }
 
@@ -81,6 +96,7 @@ const FILTER_TYPES = {
 	Number: FIELDTYPES.NUMBER,
 	Date: FIELDTYPES.DATE,
 	Boolean: FIELDTYPES.BOOLEAN,
+	AsOfDate: FIELDTYPES.DATE,
 }
 function disableColumnOptions(options: ColumnOption[]) {
 	return options.map((o) => {
@@ -95,6 +111,7 @@ function onFilterTypeChange() {
 	filter.default_operator = undefined
 	filter.default_value = undefined
 	filter.links = {}
+	filter.range_links = {}
 }
 
 const defaultOperatorOptions = computed(() => getOperatorOptions(filter.filter_type))
@@ -118,6 +135,12 @@ function clearDefault() {
 }
 
 const sourceColumn = computed(() => {
+	if (isAsOfDate.value) {
+		const firstChart = Object.keys(filter.range_links || {})[0]
+		if (!firstChart) return
+		const linkedColumn = filter.range_links![firstChart].start_column
+		return linkedColumn ? dashboard.getColumnFromFilterLink(linkedColumn) : undefined
+	}
 	const firstChart = Object.keys(filter.links)[0]
 	if (!firstChart) return
 	const linkedColumn = filter.links[firstChart]
@@ -205,7 +228,30 @@ function saveEdit() {
 									></Switch>
 									<p class="flex-1 truncate text-base">{{ link.title }}</p>
 									<div
-										v-if="enabledLinks.includes(link.name)"
+										v-if="enabledLinks.includes(link.name) && isAsOfDate"
+										class="ml-auto flex flex-shrink-0 gap-1"
+									>
+										<Autocomplete
+											class="min-w-[9rem]"
+											:placeholder="__('Start column')"
+											:options="link.columns"
+											:modelValue="filter.range_links![link.name].start_column"
+											@update:modelValue="
+												filter.range_links![link.name].start_column = $event.value
+											"
+										/>
+										<Autocomplete
+											class="min-w-[9rem]"
+											:placeholder="__('End column')"
+											:options="link.columns"
+											:modelValue="filter.range_links![link.name].end_column"
+											@update:modelValue="
+												filter.range_links![link.name].end_column = $event.value
+											"
+										/>
+									</div>
+									<div
+										v-else-if="enabledLinks.includes(link.name)"
 										class="ml-auto flex-shrink-0"
 									>
 										<Autocomplete
@@ -256,6 +302,12 @@ function saveEdit() {
 										:modelValue="filter.default_operator"
 										:options="defaultOperatorOptions"
 										@update:modelValue="onDefaultOperatorChange($event)"
+									/>
+								</template>
+								<template v-else-if="filter.filter_type === 'AsOfDate'">
+									<DatePicker
+										:modelValue="filter.default_value as string"
+										@update:modelValue="filter.default_value = $event"
 									/>
 								</template>
 								<template v-else>

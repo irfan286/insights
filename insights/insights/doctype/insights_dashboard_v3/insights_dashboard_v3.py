@@ -101,12 +101,18 @@ class InsightsDashboardv3(Document):
 
     def is_filter_column(self, query, column_name):
         # a filter links a column as "links": { '<chart>': "`<query>`.`<column>`" }
+        # or, for range filters, as "range_links": { '<chart>': { "start_column": "...", "end_column": "..." } }
         pattern = "^`([^`]+)`\\.`([^`]+)`$"
         items = frappe.parse_json(self.items)
         for item in items:
             if item["type"] != "filter":
                 continue
-            for linked_column in item.get("links", {}).values():
+            linked_values = list(item.get("links", {}).values())
+            for range_link in item.get("range_links", {}).values():
+                linked_values += [range_link.get("start_column"), range_link.get("end_column")]
+            for linked_column in linked_values:
+                if not linked_column:
+                    continue
                 match = re.match(pattern, linked_column)
                 if match and match.groups() == (query, column_name):
                     return True

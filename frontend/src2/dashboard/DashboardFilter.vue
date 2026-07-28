@@ -24,6 +24,7 @@ const FILTER_TYPES = {
 	Number: FIELDTYPES.NUMBER,
 	Date: FIELDTYPES.DATE,
 	Boolean: FIELDTYPES.BOOLEAN,
+	AsOfDate: FIELDTYPES.DATE,
 }
 
 const sourceColumn = computed(() => {
@@ -60,6 +61,12 @@ wheneverChanges(
 
 const label = computed(() => {
 	let _label = filter.filter_name
+	if (filter.filter_type === 'AsOfDate') {
+		if (filterState.value) {
+			_label += `: ${filterState.value}`
+		}
+		return _label
+	}
 	if (filterState.operator) {
 		const booleanLabelMap: Record<string, string> = {
 			is_true: ': True',
