@@ -7,6 +7,7 @@ import WorkbookSidebarListSection from './WorkbookSidebarListSection.vue'
 import WorkbookSidebarFolders from './WorkbookSidebarFolders.vue'
 import { workbookKey } from './workbook'
 import ChartIcon from '../charts/components/ChartIcon.vue'
+import ResizablePanel from '../components/ResizablePanel.vue'
 
 const workbook = inject(workbookKey)!
 const route = useRoute()
@@ -20,71 +21,78 @@ const activeQueryName = computed(() => {
 </script>
 
 <template>
-	<div
+	<ResizablePanel
 		v-if="workbook"
-		class="relative flex h-full w-[17rem] flex-shrink-0 flex-col overflow-y-auto bg-white"
+		side="left"
+		storage-key="workbook-sidebar"
+		:default-width="272"
+		:min-width="220"
+		:max-width="400"
+		:auto-collapse-below="768"
 	>
-		<WorkbookSidebarFolders
-			v-bind="{
-				title: __('Queries'),
-				emptyMessage: 'No queries',
-				items: workbook.doc.queries,
-				itemKey: 'name',
-				type: 'query',
-				add: workbook.addQuery,
-				remove: (query) => workbook.removeQuery(query.name),
-				isActive: (query) => workbook.isActiveTab('query', query.name),
-				route: (query) => `/workbook/${workbook.name}/query/${query.name}`,
-			}"
-		>
-			<template #item-icon="{ item }">
-				<ScrollText
-					v-if="item.is_native_query"
-					class="h-4 w-4 text-gray-700"
-					stroke-width="1.5"
-				/>
-				<Braces
-					v-else-if="item.is_script_query"
-					class="h-4 w-4 text-gray-700"
-					stroke-width="1.5"
-				/>
-				<Table2 v-else class="h-4 w-4 text-gray-700" stroke-width="1.5" />
-			</template>
-		</WorkbookSidebarFolders>
+		<div class="flex h-full w-full flex-col overflow-y-auto bg-white">
+			<WorkbookSidebarFolders
+				v-bind="{
+					title: __('Queries'),
+					emptyMessage: 'No queries',
+					items: workbook.doc.queries,
+					itemKey: 'name',
+					type: 'query',
+					add: workbook.addQuery,
+					remove: (query) => workbook.removeQuery(query.name),
+					isActive: (query) => workbook.isActiveTab('query', query.name),
+					route: (query) => `/workbook/${workbook.name}/query/${query.name}`,
+				}"
+			>
+				<template #item-icon="{ item }">
+					<ScrollText
+						v-if="item.is_native_query"
+						class="h-4 w-4 text-gray-700"
+						stroke-width="1.5"
+					/>
+					<Braces
+						v-else-if="item.is_script_query"
+						class="h-4 w-4 text-gray-700"
+						stroke-width="1.5"
+					/>
+					<Table2 v-else class="h-4 w-4 text-gray-700" stroke-width="1.5" />
+				</template>
+			</WorkbookSidebarFolders>
 
-		<WorkbookSidebarFolders
-			v-bind="{
-				title: __('Charts'),
-				emptyMessage: 'No charts',
-				items: workbook.doc.charts,
-				itemKey: 'name',
-				type: 'chart',
-				add: () => workbook.addChart(activeQueryName),
-				remove: (chart) => workbook.removeChart(chart.name),
-				isActive: (chart) => workbook.isActiveTab('chart', chart.name),
-				route: (chart) => `/workbook/${workbook.name}/chart/${chart.name}`,
-			}"
-		>
-			<template #item-icon="{ item }">
-				<ChartIcon :chart-type="item.chart_type" />
-			</template>
-		</WorkbookSidebarFolders>
+			<WorkbookSidebarFolders
+				v-bind="{
+					title: __('Charts'),
+					emptyMessage: 'No charts',
+					items: workbook.doc.charts,
+					itemKey: 'name',
+					type: 'chart',
+					add: () => workbook.addChart(activeQueryName),
+					remove: (chart) => workbook.removeChart(chart.name),
+					isActive: (chart) => workbook.isActiveTab('chart', chart.name),
+					route: (chart) => `/workbook/${workbook.name}/chart/${chart.name}`,
+				}"
+			>
+				<template #item-icon="{ item }">
+					<ChartIcon :chart-type="item.chart_type" />
+				</template>
+			</WorkbookSidebarFolders>
 
-		<WorkbookSidebarListSection
-			v-bind="{
-				title: __('Dashboards'),
-				emptyMessage: 'No dashboards',
-				items: workbook.doc.dashboards,
-				itemKey: 'name',
-				add: workbook.addDashboard,
-				remove: (dashboard) => workbook.removeDashboard(dashboard.name),
-				isActive: (dashboard) => workbook.isActiveTab('dashboard', dashboard.name),
-				route: (dashboard) => `/workbook/${workbook.name}/dashboard/${dashboard.name}`,
-			}"
-		>
-			<template #item-icon>
-				<LayoutPanelTop class="h-4 w-4 text-gray-700" stroke-width="1.5" />
-			</template>
-		</WorkbookSidebarListSection>
-	</div>
+			<WorkbookSidebarListSection
+				v-bind="{
+					title: __('Dashboards'),
+					emptyMessage: 'No dashboards',
+					items: workbook.doc.dashboards,
+					itemKey: 'name',
+					add: workbook.addDashboard,
+					remove: (dashboard) => workbook.removeDashboard(dashboard.name),
+					isActive: (dashboard) => workbook.isActiveTab('dashboard', dashboard.name),
+					route: (dashboard) => `/workbook/${workbook.name}/dashboard/${dashboard.name}`,
+				}"
+			>
+				<template #item-icon>
+					<LayoutPanelTop class="h-4 w-4 text-gray-700" stroke-width="1.5" />
+				</template>
+			</WorkbookSidebarListSection>
+		</div>
+	</ResizablePanel>
 </template>

@@ -9,6 +9,7 @@ import QueryInfo from './QueryInfo.vue'
 import QueryOperations from './QueryOperations.vue'
 import { useMagicKeys } from '@vueuse/core'
 import { whenever } from '@vueuse/core'
+import ResizablePanel from '../../components/ResizablePanel.vue'
 
 const query = inject<Query>('query')!
 query.autoExecute = true
@@ -37,9 +38,18 @@ onBeforeUnmount(() => {
 				<QueryBuilderTable></QueryBuilderTable>
 			</template>
 		</div>
-		<div class="relative flex h-full w-[19rem] flex-shrink-0 flex-col overflow-y-auto bg-white">
-			<QueryInfo />
-			<QueryOperations />
-		</div>
+		<ResizablePanel
+			side="right"
+			storage-key="query-right-panel"
+			:default-width="304"
+			:min-width="260"
+			:max-width="480"
+			:auto-collapse-below="768"
+		>
+			<div class="flex h-full w-full flex-col overflow-y-auto bg-white">
+				<QueryInfo />
+				<QueryOperations />
+			</div>
+		</ResizablePanel>
 	</div>
 </template>

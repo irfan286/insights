@@ -17,6 +17,7 @@ import ChartShareDialog from './components/ChartShareDialog.vue'
 import ChartSortConfig from './components/ChartSortConfig.vue'
 import ChartTypeSelector from './components/ChartTypeSelector.vue'
 import CollapsibleSection from './components/CollapsibleSection.vue'
+import ResizablePanel from '../components/ResizablePanel.vue'
 
 const props = defineProps<{ chart_name: string; queries: DropdownOption[] }>()
 
@@ -84,46 +85,57 @@ const showShareDialog = ref(false)
 			</div>
 			<ChartBuilderTable v-if="chart.dataQuery.result.executedSQL" />
 		</div>
-		<div
-			class="relative mt-1 flex w-[19rem] flex-shrink-0 flex-col divide-y overflow-y-auto bg-white px-3.5"
+		<ResizablePanel
+			side="right"
+			storage-key="chart-right-panel"
+			:default-width="304"
+			:min-width="260"
+			:max-width="480"
+			:auto-collapse-below="768"
 		>
-			<CollapsibleSection title="Chart">
-				<div class="flex flex-col gap-3">
-					<ChartTypeSelector v-model="chart.doc.chart_type" />
-					<ChartQuerySelector v-model="chart.doc.query" :queries="props.queries" />
-					<InlineFormControlLabel label="Title">
-						<LazyTextInput type="text" placeholder="Title" v-model="chart.doc.title" />
-					</InlineFormControlLabel>
-				</div>
-			</CollapsibleSection>
+			<div class="mt-1 flex h-full w-full flex-col divide-y overflow-y-auto bg-white px-3.5">
+				<CollapsibleSection title="Chart">
+					<div class="flex flex-col gap-3">
+						<ChartTypeSelector v-model="chart.doc.chart_type" />
+						<ChartQuerySelector v-model="chart.doc.query" :queries="props.queries" />
+						<InlineFormControlLabel label="Title">
+							<LazyTextInput
+								type="text"
+								placeholder="Title"
+								v-model="chart.doc.title"
+							/>
+						</InlineFormControlLabel>
+					</div>
+				</CollapsibleSection>
 
-			<ChartConfigForm v-if="chart.doc.query" :chart="chart" />
+				<ChartConfigForm v-if="chart.doc.query" :chart="chart" />
 
-			<CollapsibleSection title="Filters" collapsed>
-				<template #title-suffix v-if="chart.doc.config.filters?.filters.length">
-					<Badge size="sm" theme="orange" type="info" class="mt-0.5">
-						<span class="tnum"> {{ chart.doc.config.filters.filters.length }}</span>
-					</Badge>
-				</template>
-				<ChartFilterConfig v-model="chart.doc.config.filters" />
-			</CollapsibleSection>
+				<CollapsibleSection title="Filters" collapsed>
+					<template #title-suffix v-if="chart.doc.config.filters?.filters.length">
+						<Badge size="sm" theme="orange" type="info" class="mt-0.5">
+							<span class="tnum"> {{ chart.doc.config.filters.filters.length }}</span>
+						</Badge>
+					</template>
+					<ChartFilterConfig v-model="chart.doc.config.filters" />
+				</CollapsibleSection>
 
-			<CollapsibleSection title="Sort" collapsed>
-				<template #title-suffix v-if="chart.doc.config.order_by?.length">
-					<Badge size="sm" theme="orange" type="info" class="mt-0.5">
-						<span class="tnum"> {{ chart.doc.config.order_by?.length }}</span>
-					</Badge>
-				</template>
-				<ChartSortConfig
-					v-model="chart.doc.config.order_by"
-					:column-options="chart.dataQuery.result?.columnOptions || []"
-				/>
-			</CollapsibleSection>
+				<CollapsibleSection title="Sort" collapsed>
+					<template #title-suffix v-if="chart.doc.config.order_by?.length">
+						<Badge size="sm" theme="orange" type="info" class="mt-0.5">
+							<span class="tnum"> {{ chart.doc.config.order_by?.length }}</span>
+						</Badge>
+					</template>
+					<ChartSortConfig
+						v-model="chart.doc.config.order_by"
+						:column-options="chart.dataQuery.result?.columnOptions || []"
+					/>
+				</CollapsibleSection>
 
-			<CollapsibleSection title="Limit" collapsed>
-				<FormControl v-model="chart.doc.config.limit" type="number" />
-			</CollapsibleSection>
-		</div>
+				<CollapsibleSection title="Limit" collapsed>
+					<FormControl v-model="chart.doc.config.limit" type="number" />
+				</CollapsibleSection>
+			</div>
+		</ResizablePanel>
 	</div>
 
 	<ChartShareDialog v-model="showShareDialog" :chart="chart" />
