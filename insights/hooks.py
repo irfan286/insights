@@ -120,6 +120,7 @@ permission_query_conditions = {
     "Insights Chart v3": "insights.permissions.get_permission_query_conditions",
     "Insights Dashboard v3": "insights.permissions.get_permission_query_conditions",
     "Insights Alert": "insights.permissions.get_permission_query_conditions",
+    "Insights Dashboard Filter Preset": "insights.insights.doctype.insights_dashboard_filter_preset.insights_dashboard_filter_preset.get_permission_query_conditions",
 }
 
 has_permission = {
@@ -131,6 +132,7 @@ has_permission = {
     "Insights Chart v3": "insights.permissions.has_doc_permission",
     "Insights Dashboard v3": "insights.permissions.has_doc_permission",
     "Insights Alert": "insights.permissions.has_doc_permission",
+    "Insights Dashboard Filter Preset": "insights.insights.doctype.insights_dashboard_filter_preset.insights_dashboard_filter_preset.has_permission",
 }
 
 # DocType Class

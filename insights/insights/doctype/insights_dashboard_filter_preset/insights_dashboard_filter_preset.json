@@ -1,0 +1,94 @@
+{
+ "actions": [],
+ "creation": "2026-08-07 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "preset_name",
+  "dashboard",
+  "column_break_1",
+  "for_user",
+  "section_break_1",
+  "filter_values"
+ ],
+ "fields": [
+  {
+   "fieldname": "preset_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Preset Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "dashboard",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Dashboard",
+   "options": "Insights Dashboard v3",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Blank = shared with everyone who can view this dashboard",
+   "fieldname": "for_user",
+   "fieldtype": "Link",
+   "label": "For User",
+   "options": "User",
+   "search_index": 1
+  },
+  {
+   "fieldname": "section_break_1",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "filter_values",
+   "fieldtype": "JSON",
+   "label": "Filter Values"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-07 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Insights",
+ "name": "Insights Dashboard Filter Preset",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "Insights User",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "Insights Viewer",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "Insights Admin",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "read_only": 1,
+ "row_format": "Dynamic",
+ "search_fields": "preset_name",
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "preset_name",
+ "track_changes": 1
+}

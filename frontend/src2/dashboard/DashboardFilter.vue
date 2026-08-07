@@ -6,7 +6,7 @@ import { FIELDTYPES } from '../helpers/constants'
 import DataTypeIcon from '../query/components/DataTypeIcon.vue'
 import { ColumnDataType } from '../types/query.types'
 import { WorkbookDashboardFilter } from '../types/workbook.types'
-import { Dashboard } from './dashboard'
+import { Dashboard, FilterState } from './dashboard'
 import DashboardFilterEditor from './DashboardFilterEditor.vue'
 import Filter from './Filter.vue'
 
@@ -50,11 +50,25 @@ function stringValuesProvider(search: string) {
 	)
 }
 
-const filterState = reactive(copy(dashboard.filterStates[filter.filter_name] || {}))
+const filterState = reactive<Partial<FilterState>>(
+	copy(dashboard.filterStates[filter.filter_name] || {}),
+)
 wheneverChanges(
 	() => filterState,
 	() => {
 		dashboard.updateFilterState(filter.filter_name, filterState.operator, filterState.value)
+	},
+	{ deep: true },
+)
+// keep the local copy in sync when the value changes from outside this widget
+// (e.g. applying a saved filter preset touches dashboard.filterStates directly)
+wheneverChanges(
+	() => dashboard.filterStates[filter.filter_name],
+	() => {
+		const globalState = dashboard.filterStates[filter.filter_name] || {}
+		delete filterState.operator
+		delete filterState.value
+		Object.assign(filterState, copy(globalState))
 	},
 	{ deep: true },
 )

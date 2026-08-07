@@ -6,12 +6,17 @@ from contextlib import contextmanager
 
 import frappe
 import requests
+from frappe.defaults import clear_user_default, get_user_default, set_user_default
 from frappe.model.document import Document
 from frappe.query_builder import Interval
 from frappe.query_builder.functions import Now
 from frappe.utils.telemetry import capture
 
 from insights.utils import DocShare, File
+
+
+def get_default_preset_key(dashboard: str) -> str:
+    return f"insights_dashboard_filter_preset_default:{dashboard}"
 
 
 class InsightsDashboardv3(Document):
@@ -250,6 +255,115 @@ class InsightsDashboardv3(Document):
             capture("dashboard_shared_with_user", "insights")
         if is_public:
             capture("dashboard_set_public", "insights")
+
+    @frappe.whitelist()
+    def list_filter_presets(self):
+        """Presets visible to the current user: their own (private + shared) + everyone's shared ones."""
+        presets = frappe.get_all(
+            "Insights Dashboard Filter Preset",
+            filters={"dashboard": self.name},
+            or_filters=[["for_user", "=", frappe.session.user], ["for_user", "in", ["", None]]],
+            fields=["name", "preset_name", "for_user", "filter_values", "owner", "modified"],
+            order_by="preset_name asc",
+        )
+        default_preset_name = get_user_default(get_default_preset_key(self.name))
+        for preset in presets:
+            preset.filter_values = frappe.parse_json(preset.filter_values)
+            preset.is_shared = not preset.for_user
+            preset.is_mine = preset.owner == frappe.session.user
+            preset.is_default = preset.name == default_preset_name
+        return presets
+
+    @frappe.whitelist()
+    def get_default_filter_preset(self):
+        """Used on initial dashboard load to resolve the current user's default preset, if any."""
+        default_preset_name = get_user_default(get_default_preset_key(self.name))
+        if not default_preset_name or not frappe.db.exists(
+            "Insights Dashboard Filter Preset", default_preset_name
+        ):
+            if default_preset_name:
+                clear_user_default(get_default_preset_key(self.name))
+            return None
+
+        doc = frappe.get_doc("Insights Dashboard Filter Preset", default_preset_name)
+        if not doc.has_permission("read"):
+            return None
+        return {
+            "name": doc.name,
+            "preset_name": doc.preset_name,
+            "filter_values": frappe.parse_json(doc.filter_values),
+        }
+
+    @frappe.whitelist()
+    def save_filter_preset(
+        self, preset_name: str, filter_values: dict | str, is_shared: bool = False, is_default: bool = False
+    ):
+        filter_values = frappe.parse_json(filter_values)
+        if not filter_values:
+            frappe.throw(frappe._("Cannot save an empty filter preset"))
+
+        doc = frappe.new_doc("Insights Dashboard Filter Preset")
+        doc.dashboard = self.name
+        doc.preset_name = preset_name
+        doc.for_user = "" if is_shared else frappe.session.user
+        doc.filter_values = frappe.as_json(filter_values)
+        doc.insert(ignore_permissions=True)  # validate() already re-checks dashboard read access
+
+        if is_default:
+            set_user_default(get_default_preset_key(self.name), doc.name)
+
+        capture("dashboard_filter_preset_saved", "insights")
+        return doc.name
+
+    @frappe.whitelist()
+    def update_filter_preset(
+        self,
+        preset: str,
+        preset_name: str | None = None,
+        filter_values: dict | str | None = None,
+        is_shared: bool | None = None,
+    ):
+        doc = frappe.get_doc("Insights Dashboard Filter Preset", preset)
+        if doc.dashboard != self.name:
+            frappe.throw(frappe._("Preset does not belong to this dashboard"))
+        if doc.owner != frappe.session.user and frappe.session.user != "Administrator":
+            frappe.throw(frappe._("Only the creator of this preset can edit it"), frappe.PermissionError)
+
+        if preset_name is not None:
+            doc.preset_name = preset_name
+        if filter_values is not None:
+            doc.filter_values = frappe.as_json(frappe.parse_json(filter_values))
+        if is_shared is not None:
+            doc.for_user = "" if is_shared else frappe.session.user
+
+        doc.save(ignore_permissions=True)
+        return doc.name
+
+    @frappe.whitelist()
+    def delete_filter_preset(self, preset: str):
+        doc = frappe.get_doc("Insights Dashboard Filter Preset", preset)
+        if doc.dashboard != self.name:
+            frappe.throw(frappe._("Preset does not belong to this dashboard"))
+
+        is_owner = doc.owner == frappe.session.user
+        can_curate_shared = not doc.for_user and frappe.has_permission(
+            "Insights Dashboard v3", ptype="write", doc=self.name
+        )
+        if not (is_owner or can_curate_shared or frappe.session.user == "Administrator"):
+            frappe.throw(frappe._("You do not have permission to delete this preset"), frappe.PermissionError)
+
+        doc.delete(ignore_permissions=True)  # on_trash() clears any dangling default pointer(s)
+
+    @frappe.whitelist()
+    def set_default_filter_preset(self, preset: str | None = None):
+        """preset=None clears the current user's default for this dashboard."""
+        if preset:
+            doc = frappe.get_doc("Insights Dashboard Filter Preset", preset)
+            if doc.dashboard != self.name or not doc.has_permission("read"):
+                frappe.throw(frappe._("You do not have permission to use this preset"), frappe.PermissionError)
+            set_user_default(get_default_preset_key(self.name), preset)
+        else:
+            clear_user_default(get_default_preset_key(self.name))
 
 
 def get_page_preview(url: str, headers: dict | None = None) -> bytes:

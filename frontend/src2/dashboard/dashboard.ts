@@ -3,6 +3,7 @@ import { reactive, ref, toRefs } from 'vue'
 import { useTelemetry } from 'frappe-ui/frappe'
 import useChart from '../charts/chart'
 import {
+	copy,
 	getUniqueId,
 	safeJSONParse,
 	showErrorToast,
@@ -14,7 +15,13 @@ import useDocumentResource from '../helpers/resource'
 import { isFilterValid } from '../query/components/filter_utils'
 import { column, filter_group } from '../query/helpers'
 import session from '../session'
-import { AdhocFilters, FilterArgs, FilterGroup, FilterOperator, FilterValue } from '../types/query.types'
+import {
+	AdhocFilters,
+	FilterArgs,
+	FilterGroup,
+	FilterOperator,
+	FilterValue,
+} from '../types/query.types'
 import {
 	InsightsDashboardv3,
 	WorkbookChart,
@@ -40,6 +47,17 @@ export type FilterState = {
 	value: FilterValue
 }
 
+export type FilterPreset = {
+	name: string
+	preset_name: string
+	for_user: string
+	owner: string
+	filter_values: Record<string, FilterState>
+	is_shared: boolean
+	is_mine: boolean
+	is_default: boolean
+}
+
 function makeDashboard(name: string) {
 	const { capture } = useTelemetry()
 	const dashboard = getDashboardResource(name)
@@ -51,15 +69,18 @@ function makeDashboard(name: string) {
 		return editing.value && editingItemIndex.value === dashboard.doc.items.indexOf(item)
 	}
 
-
 	const filters = ref<Record<string, FilterArgs[]>>({})
 	const filterStates = ref<Record<string, FilterState>>({})
+	const filterPresets = ref<FilterPreset[]>([])
+	const loadingFilterPresets = ref(false)
 
 	function addChart(charts: WorkbookChart[]) {
 		const maxY = getMaxY()
 		charts.forEach((chart) => {
 			if (
-				!dashboard.doc.items.some((item) => item.type === 'chart' && item.chart === chart.name)
+				!dashboard.doc.items.some(
+					(item) => item.type === 'chart' && item.chart === chart.name,
+				)
 			) {
 				dashboard.doc.items.push({
 					type: 'chart',
@@ -123,9 +144,7 @@ function makeDashboard(name: string) {
 
 	function positionNewFilter(newFilter: WorkbookDashboardItem) {
 		const items = dashboard.doc.items
-		const existingFilters = items.filter(
-			(item) => item.type === 'filter' && item !== newFilter
-		)
+		const existingFilters = items.filter((item) => item.type === 'filter' && item !== newFilter)
 
 		if (existingFilters.length === 0) {
 			newFilter.layout.x = 0
@@ -137,7 +156,7 @@ function makeDashboard(name: string) {
 		const topRowFilters = existingFilters.filter((item) => item.layout.y === topRowY)
 		const rightmostX = Math.max(
 			...topRowFilters.map((item) => item.layout.x + (item.layout.w || filter_w)),
-			0
+			0,
 		)
 
 		if (rightmostX + newFilter.layout.w <= grid_cols) {
@@ -224,7 +243,7 @@ function makeDashboard(name: string) {
 				item.type === 'filter' &&
 				'links' in item &&
 				(item.links[chart_name] || item.range_links?.[chart_name]) &&
-				(!exclude_filter_name || item.filter_name !== exclude_filter_name)
+				(!exclude_filter_name || item.filter_name !== exclude_filter_name),
 		)
 
 		if (filtersApplied.length === 0) return
@@ -298,9 +317,13 @@ function makeDashboard(name: string) {
 		return filtersByQuery
 	}
 
-	function updateFilterState(filter_name: string, operator?: FilterOperator, value?: FilterValue) {
+	function updateFilterState(
+		filter_name: string,
+		operator?: FilterOperator,
+		value?: FilterValue,
+	) {
 		const filter = dashboard.doc.items.find(
-			(item) => item.type === 'filter' && item.filter_name === filter_name
+			(item) => item.type === 'filter' && item.filter_name === filter_name,
 		)
 		if (!filter) return
 
@@ -318,7 +341,7 @@ function makeDashboard(name: string) {
 
 	function applyFilter(filter_name: string) {
 		const item = dashboard.doc.items.find(
-			(item) => item.type === 'filter' && item.filter_name === filter_name
+			(item) => item.type === 'filter' && item.filter_name === filter_name,
 		)
 		if (!item) return
 
@@ -328,6 +351,65 @@ function makeDashboard(name: string) {
 			...Object.keys(filterItem.range_links || {}),
 		])
 		filteredCharts.forEach((chart_name) => refreshChart(chart_name))
+	}
+
+	function refreshAllFilteredCharts() {
+		const filteredCharts = new Set<string>()
+		dashboard.doc.items.forEach((item) => {
+			if (item.type !== 'filter') return
+			Object.keys(item.links || {}).forEach((c) => item.links[c] && filteredCharts.add(c))
+			Object.keys(item.range_links || {}).forEach((c) => filteredCharts.add(c))
+		})
+		filteredCharts.forEach((chart_name) => refreshChart(chart_name))
+	}
+
+	async function loadFilterPresets() {
+		if (!session.isLoggedIn) return
+		loadingFilterPresets.value = true
+		filterPresets.value = (await dashboard.call('list_filter_presets').catch(() => [])) || []
+		loadingFilterPresets.value = false
+	}
+
+	function applyFilterPreset(preset: FilterPreset) {
+		// replace, not merge: a preset is a full named snapshot — applying it twice
+		// must always produce the same result regardless of transient prior state.
+		// a filter widget added after the preset was saved simply has no key in
+		// filter_values, which correctly resets it to "unset".
+		filterStates.value = copy(preset.filter_values)
+		refreshAllFilteredCharts()
+	}
+
+	async function saveFilterPreset(preset_name: string, isShared: boolean, isDefault: boolean) {
+		const name = await dashboard.call('save_filter_preset', {
+			preset_name,
+			filter_values: filterStates.value,
+			is_shared: isShared,
+			is_default: isDefault,
+		})
+		await loadFilterPresets()
+		return name
+	}
+
+	async function updateFilterPreset(
+		preset: FilterPreset,
+		changes: {
+			preset_name?: string
+			filter_values?: Record<string, FilterState>
+			is_shared?: boolean
+		},
+	) {
+		await dashboard.call('update_filter_preset', { preset: preset.name, ...changes })
+		await loadFilterPresets()
+	}
+
+	async function deleteFilterPreset(preset: FilterPreset) {
+		await dashboard.call('delete_filter_preset', { preset: preset.name })
+		await loadFilterPresets()
+	}
+
+	async function setDefaultFilterPreset(preset: FilterPreset | null) {
+		await dashboard.call('set_default_filter_preset', { preset: preset?.name || null })
+		await loadFilterPresets()
 	}
 
 	function getColumnFromFilterLink(linkedColumn: string) {
@@ -347,7 +429,7 @@ function makeDashboard(name: string) {
 		query: string,
 		column: string,
 		search_term?: string,
-		adhocFilters?: Record<string, FilterGroup>
+		adhocFilters?: Record<string, FilterGroup>,
 	) {
 		return dashboard.call('get_distinct_column_values', {
 			query: query,
@@ -375,23 +457,50 @@ function makeDashboard(name: string) {
 			.then(() => dashboard.load())
 	}
 
-
 	const key = `insights:dashboard-filter-states-${name}`
+	const hadPersistedFilterState = localStorage.getItem(key) !== null
 	filterStates.value = store(key, () => filterStates.value)
 
-	waitUntil(() => dashboard.isloaded).then(() => {
-		const defaultFilters = dashboard.doc.items.reduce((acc, item) => {
-			if (item.type != 'filter') return acc
-			const filterItem = item as WorkbookDashboardFilter
-			if (filterItem.default_operator && filterItem.default_value) {
-				acc[filterItem.filter_name] = {
-					operator: filterItem.default_operator,
-					value: filterItem.default_value,
+	// additive only — never overwrites a key already present, from either
+	// localStorage or an applied preset. covers filter widgets that still
+	// have no value at all (first-ever load, or added after the fact).
+	function applyMissingWidgetDefaults() {
+		const missing = dashboard.doc.items.reduce(
+			(acc, item) => {
+				if (item.type != 'filter') return acc
+				const filterItem = item as WorkbookDashboardFilter
+				if (filterStates.value[filterItem.filter_name] !== undefined) return acc
+				if (filterItem.default_operator && filterItem.default_value !== undefined) {
+					acc[filterItem.filter_name] = {
+						operator: filterItem.default_operator,
+						value: filterItem.default_value,
+					}
 				}
+				return acc
+			},
+			{} as typeof filterStates.value,
+		)
+		Object.assign(filterStates.value, missing)
+	}
+
+	waitUntil(() => dashboard.isloaded).then(async () => {
+		// precedence: (a) existing localStorage state always wins on reload — it
+		// reflects the user's own last explicit action, even if that means every
+		// filter is cleared. (b) the user's default PRESET only kicks in on this
+		// browser's first-ever visit to this dashboard (no localStorage yet),
+		// giving new sessions/devices a sensible starting point. (c) per-widget
+		// static defaults fill in anything still missing, last and additive-only.
+		if (!hadPersistedFilterState && session.isLoggedIn) {
+			const defaultPreset = await dashboard
+				.call('get_default_filter_preset')
+				.catch(() => null)
+			if (defaultPreset?.filter_values) {
+				filterStates.value = copy(defaultPreset.filter_values)
 			}
-			return acc
-		}, {} as typeof filterStates.value)
-		Object.assign(filterStates.value, defaultFilters)
+		}
+		applyMissingWidgetDefaults()
+
+		loadFilterPresets()
 
 		wheneverChanges(
 			() => dashboard.doc.title,
@@ -405,7 +514,7 @@ function makeDashboard(name: string) {
 					}
 				}
 			},
-			{ debounce: 500 }
+			{ debounce: 500 },
 		)
 	})
 
@@ -418,6 +527,8 @@ function makeDashboard(name: string) {
 
 		filters,
 		filterStates,
+		filterPresets,
+		loadingFilterPresets,
 
 		addChart,
 		addText,
@@ -433,6 +544,13 @@ function makeDashboard(name: string) {
 		updateFilterState,
 		applyFilter,
 		getColumnFromFilterLink,
+
+		loadFilterPresets,
+		applyFilterPreset,
+		saveFilterPreset,
+		updateFilterPreset,
+		deleteFilterPreset,
+		setDefaultFilterPreset,
 
 		getDistinctColumnValues,
 		updateAccess,
@@ -470,13 +588,16 @@ function getDashboardResource(name: string) {
 		},
 	})
 	if (session.isLoggedIn) {
-		dashboard.onAfterLoad(() => dashboard.call('track_view').catch(() => { }))
+		dashboard.onAfterLoad(() => dashboard.call('track_view').catch(() => {}))
 	}
-	wheneverChanges(() => dashboard.doc.read_only, () => {
-		if (dashboard.doc.read_only) {
-			dashboard.autoSave = false
-		}
-	})
+	wheneverChanges(
+		() => dashboard.doc.read_only,
+		() => {
+			if (dashboard.doc.read_only) {
+				dashboard.autoSave = false
+			}
+		},
+	)
 	return dashboard
 }
 

@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import { downloadImage, waitUntil, wheneverChanges } from '../helpers'
 import useDashboard from './dashboard'
 import { __ } from '../translation'
+import DashboardFilterPresets from './DashboardFilterPresets.vue'
 import DashboardItem from './DashboardItem.vue'
 import VueGridLayout from './VueGridLayout.vue'
 import { useStorage } from '@vueuse/core'
@@ -48,6 +49,7 @@ const verticalCompact = useStorage('dashboard_vertical_compact', true)
 			]"
 		/>
 		<div class="flex items-center gap-2">
+			<DashboardFilterPresets />
 			<Button variant="outline" @click="() => dashboard.refresh(true)" :label="__('Refresh')">
 				<template #prefix>
 					<RefreshCcw class="h-4 w-4 text-gray-700" stroke-width="1.5" />

@@ -7,6 +7,7 @@ import { downloadImage, safeJSONParse, waitUntil } from '../helpers'
 import { WorkbookChart, WorkbookQuery } from '../types/workbook.types'
 import useDashboard from './dashboard'
 import DashboardChartSelectorDialog from './DashboardChartSelectorDialog.vue'
+import DashboardFilterPresets from './DashboardFilterPresets.vue'
 import DashboardItem from './DashboardItem.vue'
 import DashboardShareDialog from './DashboardShareDialog.vue'
 import VueGridLayout from './VueGridLayout.vue'
@@ -78,6 +79,7 @@ async function downloadDashboardImage() {
 					placeholder="Untitled Dashboard"
 				></ContentEditable>
 				<div class="flex gap-2">
+					<DashboardFilterPresets />
 					<Button
 						v-if="!dashboard.editing"
 						variant="outline"
