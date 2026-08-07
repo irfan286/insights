@@ -314,6 +314,14 @@ function makeChart(name: string) {
 			query.selectColumns({
 				column_names: rows.map((r) => r.column_name),
 			})
+			// `select` has no aliasing of its own, so custom row labels need
+			// an explicit rename to survive (unlike `summarize`, which applies
+			// dimension_name as the output column name itself).
+			rows.forEach((r) => {
+				if (r.dimension_name && r.dimension_name !== r.column_name) {
+					query.renameColumn(r.column_name, r.dimension_name)
+				}
+			})
 			return
 		}
 
