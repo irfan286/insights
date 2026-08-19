@@ -23,6 +23,24 @@ dependencies = [
     # "ibis-framework[bigquery]",
     "psycopg[binary]",
     "xlsxwriter",
+    # Direct import in insights/mcp/validate.py (Draft202012Validator). Declared here
+    # rather than relied on transitively via frappe-mcp, so that vendoring frappe-mcp
+    # (the documented exit strategy) cannot silently break argument validation.
+    "jsonschema>=4.24.0,<5",
+    # MCP protocol layer. Pinned to a FORK at a COMMIT SHA, never a branch name, so
+    # `bench update` cannot move the transport underneath us.
+    #
+    # Never use PyPI frappe-mcp (0.1.0, a year stale, predates prompt support) and never
+    # upstream frappe/mcp: its metadata pins Werkzeug==3.1.3 and pydantic~=2.11.7, which
+    # do not overlap Frappe v16's 3.1.6 / 2.12.5. Because Frappe is installed editable,
+    # pip does not reconsider its requirements and silently downgrades the WSGI layer
+    # Frappe serves every request through -- then fails to build pydantic-core, which
+    # ships no cp314 wheel at that version. See docs/mcp-IMPLEMENTATION.md §8 D.
+    #
+    # The fork's only diff from upstream 11d5076 is relaxing those two pins to ranges.
+    # Upstream's own suite passes against Frappe v16's versions (67 passed). Tracked as
+    # upstream issue #5.
+    "frappe-mcp @ git+https://github.com/Irfan234-afif/frappe-mcp@bef8fbf8f1e2ad053c3956712612c18d355bde1d",
 ]
 
 [project.optional-dependencies]
