@@ -162,6 +162,7 @@ scheduler_events = {
     ],
     "daily": [
         "insights.api.data_store.sync_tables",
+        "insights.mcp.docs.flag_stale_docs",
     ],
     "hourly": [
         "insights.api.data_store.update_failed_sync_status",

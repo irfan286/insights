@@ -1,0 +1,293 @@
+# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
+# For license information, please see license.txt
+
+"""Structural enforcement of the non-negotiables.
+
+These are AST tests, not shell greps, and deliberately so. `grep '\\.execute('`
+false-positives on `execute_ibis_query(`, on comments and on docstrings; an AST walk
+does not. Running them inside the suite also means they cannot be skipped by editing
+a CI config.
+
+Each test corresponds to a numbered rule in docs/mcp-IMPLEMENTATION.md §3. If one
+fails, read that rule before "fixing" the test -- every one of them was decided after
+two adversarial reviews and cost real analysis.
+"""
+
+import ast
+from pathlib import Path
+
+import frappe
+from frappe.tests import UnitTestCase
+
+from insights.tests.base import InsightsIntegrationTestCase
+
+MCP_ROOT = Path(frappe.get_app_path("insights")) / "mcp"
+
+
+def _modules():
+    for path in sorted(MCP_ROOT.rglob("*.py")):
+        yield path, ast.parse(path.read_text(), filename=str(path))
+
+
+def _rel(path: Path) -> str:
+    return str(path.relative_to(MCP_ROOT.parent.parent))
+
+
+def _decorator_names(node: ast.FunctionDef) -> list[str]:
+    names = []
+    for dec in node.decorator_list:
+        target = dec.func if isinstance(dec, ast.Call) else dec
+        if isinstance(target, ast.Attribute):
+            names.append(target.attr)
+        elif isinstance(target, ast.Name):
+            names.append(target.id)
+    return names
+
+
+def _mcp_tools():
+    """Yield (path, FunctionDef, decorator Call) for every @mcp.tool-decorated function."""
+    for path, tree in _modules():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for dec in node.decorator_list:
+                target = dec.func if isinstance(dec, ast.Call) else dec
+                if isinstance(target, ast.Attribute) and target.attr == "tool":
+                    yield path, node, dec
+
+
+class TestMcpStructuralGuards(UnitTestCase):
+    def test_rule_3_no_execute_outside_guards(self):
+        """Rule 3: every transient .execute() goes through guards.execute_transient."""
+        offenders = []
+        for path, tree in _modules():
+            if path.name == "guards.py":
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "execute"
+                ):
+                    offenders.append(f"{_rel(path)}:{node.lineno}")
+        self.assertFalse(
+            offenders,
+            "Transient execution must route through guards.execute_transient "
+            f"(non-negotiable #3). Found: {offenders}",
+        )
+
+    def test_no_ignore_permissions_anywhere(self):
+        """§8.3: the MCP layer never bypasses permissions."""
+        offenders = []
+        for path, tree in _modules():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.keyword) and node.arg == "ignore_permissions":
+                    offenders.append(f"{_rel(path)}:{node.value.lineno}")
+        self.assertFalse(offenders, f"ignore_permissions is banned under insights/mcp/: {offenders}")
+
+    def test_rule_7_origin_check_is_wired(self):
+        """Rule 7: a refactor dropping this call is how the control realistically dies."""
+        source = (MCP_ROOT / "__init__.py").read_text()
+        self.assertIn("origin_allowed(", source)
+
+    def test_origin_check_does_not_trust_the_host_header(self):
+        """See §8 G. get_url() defaults to allow_header_override=True, so absent a
+        configured host_name it derives the origin from the REQUEST's own Host header.
+        A DNS-rebinding caller controlling both Host and Origin would then match itself.
+
+        Checked on the AST, not the text: the module's prose explains the hazard and
+        would defeat a substring assertion.
+        """
+        tree = ast.parse((MCP_ROOT / "origin.py").read_text())
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get_url"
+        ]
+        self.assertTrue(calls, "origin.py no longer resolves the site's own origin")
+        for call in calls:
+            overrides = [
+                kw for kw in call.keywords
+                if kw.arg == "allow_header_override" and getattr(kw.value, "value", None) is False
+            ]
+            self.assertTrue(
+                overrides,
+                f"origin.py:{call.lineno} get_url() must pass allow_header_override=False",
+            )
+
+    def test_guest_check_is_first_statement_of_handle_mcp(self):
+        """§3.6: allow_guest=True is only safe because of this ordering."""
+        tree = ast.parse((MCP_ROOT / "__init__.py").read_text())
+        handler = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "handle_mcp"
+        )
+        first = handler.body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+            first = handler.body[1]  # skip the docstring
+        self.assertIsInstance(first, ast.If, "the guest check must come first")
+        self.assertIn("Guest", ast.dump(first.test))
+
+    def test_rule_2_every_tool_declares_an_explicit_input_schema(self):
+        """Rule 2: inference cannot express enums, defaults or nested objects."""
+        checked = 0
+        for path, fn, dec in _mcp_tools():
+            checked += 1
+            kwargs = {k.arg for k in dec.keywords} if isinstance(dec, ast.Call) else set()
+            self.assertIn(
+                "input_schema", kwargs,
+                f"{_rel(path)}:{fn.lineno} {fn.name} must pass input_schema= explicitly",
+            )
+        self.assertGreater(checked, 0, "no @mcp.tool functions found -- did the walker break?")
+
+    def test_every_tool_validates_its_arguments(self):
+        """§3.6: upstream never validates tools/call arguments (run_tool is dead code)."""
+        for path, fn, _dec in _mcp_tools():
+            self.assertIn(
+                "tool_args", _decorator_names(fn),
+                f"{_rel(path)}:{fn.lineno} {fn.name} must carry @tool_args(SCHEMA)",
+            )
+
+    def test_rule_6_write_tools_are_transactional(self):
+        """Rule 6: upstream swallows tool exceptions, so Frappe never auto-rolls-back."""
+        for path, fn, dec in _mcp_tools():
+            read_only = False
+            if isinstance(dec, ast.Call):
+                for kw in dec.keywords:
+                    if kw.arg == "annotations" and isinstance(kw.value, ast.Call):
+                        for akw in kw.value.keywords:
+                            if akw.arg == "readOnlyHint" and getattr(akw.value, "value", False) is True:
+                                read_only = True
+            if not read_only:
+                self.assertIn(
+                    "transactional", _decorator_names(fn),
+                    f"{_rel(path)}:{fn.lineno} {fn.name} is a write tool and must carry "
+                    "@transactional (non-negotiable #6)",
+                )
+
+    def test_rule_4_tools_return_str(self):
+        """Rule 4: a dict return makes upstream emit the same JSON twice."""
+        for path, fn, _dec in _mcp_tools():
+            self.assertIsNotNone(
+                fn.returns, f"{_rel(path)}:{fn.lineno} {fn.name} must annotate its return type"
+            )
+            self.assertEqual(
+                getattr(fn.returns, "id", None), "str",
+                f"{_rel(path)}:{fn.lineno} {fn.name} must return str, not "
+                f"{ast.dump(fn.returns)} (non-negotiable #4)",
+            )
+
+    def test_rule_9_no_tool_emits_a_code_operation(self):
+        """Rule 9: the safe_exec sandbox policy has not been read yet."""
+        offenders = []
+        for path, tree in _modules():
+            for node in ast.walk(tree):
+                # An emitted operation is a dict literal {"type": "code", ...}. Matching
+                # the bare string "code" would also hit JSON-RPC error payloads.
+                if not isinstance(node, ast.Dict):
+                    continue
+                for key, value in zip(node.keys, node.values):
+                    if (
+                        isinstance(key, ast.Constant) and key.value == "type"
+                        and isinstance(value, ast.Constant) and value.value == "code"
+                    ):
+                        offenders.append(f"{_rel(path)}:{node.lineno}")
+        self.assertFalse(
+            offenders,
+            "No MCP tool may emit a `code` operation until the safe_exec sandbox policy "
+            f"is reviewed (non-negotiable #9, open question #16). Found: {offenders}",
+        )
+
+    def test_rule_8_no_mcp_resources(self):
+        """Rule 8: upstream raises NotImplementedError for every resources/* handler."""
+        for path, tree in _modules():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and node.attr in {"resource", "resources"}:
+                    self.fail(f"{_rel(path)}:{node.lineno} MCP resources are out of scope (rule 8)")
+
+
+class TestExecuteTransient(InsightsIntegrationTestCase):
+    """Behavioural tests for the choke point.
+
+    Read the honest-scope note at the top of insights/mcp/guards.py before adding a
+    test that asserts table-level isolation: with enable_permissions = 0 there is none,
+    and a test claiming otherwise would pass for the wrong reason.
+    """
+
+    OPS = [
+        {"type": "source", "table": {"type": "table", "data_source": "demo_data", "table_name": "orders"}},
+        {"type": "limit", "limit": 3},
+    ]
+
+    @classmethod
+    def before_class(cls):
+        cls.has_demo_data = bool(
+            frappe.db.exists("Insights Table v3", {"data_source": "demo_data", "table": "orders"})
+        )
+
+    def test_empty_operations_is_a_tool_error(self):
+        from insights.mcp.errors import ToolError
+        from insights.mcp.guards import execute_transient
+
+        with self.assertRaises(ToolError):
+            execute_transient([])
+
+    def test_resolved_tables_are_derived_from_operations(self):
+        """Derived, not accepted as an argument -- a caller cannot omit a table."""
+        from insights.mcp.guards import resolved_tables
+
+        self.assertEqual(
+            resolved_tables(self.OPS),
+            [{"data_source": "demo_data", "table_name": "orders"}],
+        )
+
+    def test_user_without_insights_role_is_refused(self):
+        from insights.mcp.errors import ToolError
+        from insights.mcp.guards import execute_transient
+        from insights.tests.factories import as_user, create_user
+
+        user = create_user("mcp-guards-noroles@example.com", roles=[])
+        try:
+            with as_user(user.name), self.assertRaises(ToolError) as ctx:
+                execute_transient(self.OPS)
+            self.assertIn("access", str(ctx.exception).lower())
+        finally:
+            frappe.set_user("Administrator")
+            frappe.delete_doc("User", user.name, force=True, ignore_permissions=True)
+
+    def test_execution_is_attributable_in_the_query_log(self):
+        """The `mcp-` prefix is the audit trail -- every MCP execution is greppable."""
+        if not self.has_demo_data:
+            self.skipTest("demo_data.orders not present on this bench")
+
+        from insights.insights.doctype.insights_data_source_v3.insights_data_source_v3 import (
+            db_connections,
+        )
+        from insights.mcp.guards import execute_transient
+
+        with db_connections():
+            execute_transient(self.OPS, page_size=3, force=True)
+
+        logged = frappe.get_all(
+            "Insights Query Execution Log",
+            filters={"query": ["like", "mcp-%"]},
+            fields=["query"],
+            order_by="creation desc",
+            limit=1,
+        )
+        self.assertTrue(logged, "no execution log row attributed to an mcp- query")
+        self.assertTrue(logged[0]["query"].startswith("mcp-"))
+
+    def test_build_transient_returns_an_expression_without_rows(self):
+        if not self.has_demo_data:
+            self.skipTest("demo_data.orders not present on this bench")
+
+        from insights.insights.doctype.insights_data_source_v3.insights_data_source_v3 import (
+            db_connections,
+        )
+        from insights.mcp.guards import build_transient
+
+        with db_connections():
+            expr = build_transient(self.OPS)
+            self.assertIn("order_id", expr.schema().keys())

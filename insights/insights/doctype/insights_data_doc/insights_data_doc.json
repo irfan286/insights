@@ -1,0 +1,213 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-08-19 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "data_source",
+  "scope",
+  "table_name",
+  "column_break_1",
+  "zone",
+  "status",
+  "sort_order",
+  "section_break_1",
+  "title",
+  "summary",
+  "body",
+  "section_break_2",
+  "source_file",
+  "schema_fingerprint",
+  "referenced_columns",
+  "column_break_2",
+  "is_stale",
+  "stale_reason",
+  "section_break_3",
+  "promoted_from",
+  "proposed_for_promotion",
+  "verified_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "data_source",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Data Source",
+   "options": "Insights Data Source v3",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "Data Source",
+   "fieldname": "scope",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Scope",
+   "options": "Data Source\nTable",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.scope=='Table'",
+   "description": "The raw remote table name, matching Insights Table v3.table",
+   "fieldname": "table_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Table Name",
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Documentation",
+   "description": "Documentation is written by humans and is authoritative. AI Note is written by Claude and is unverified inference. The MCP server may only ever write the AI Note zone.",
+   "fieldname": "zone",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Zone",
+   "options": "Documentation\nAI Note",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "Active",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Active\nSuperseded\nDraft"
+  },
+  {
+   "fieldname": "sort_order",
+   "fieldtype": "Int",
+   "label": "Sort Order"
+  },
+  {
+   "fieldname": "section_break_1",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "description": "One line. Shown as the table's purpose in list_tables. Derived from the body if left blank.",
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "body",
+   "fieldtype": "Markdown Editor",
+   "label": "Body"
+  },
+  {
+   "fieldname": "section_break_2",
+   "fieldtype": "Section Break",
+   "label": "Provenance & Freshness"
+  },
+  {
+   "fieldname": "source_file",
+   "fieldtype": "Link",
+   "label": "Source File",
+   "options": "File"
+  },
+  {
+   "fieldname": "schema_fingerprint",
+   "fieldtype": "Data",
+   "label": "Schema Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "referenced_columns",
+   "fieldtype": "JSON",
+   "label": "Referenced Columns",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "is_stale",
+   "fieldtype": "Check",
+   "label": "Is Stale",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stale_reason",
+   "fieldtype": "Small Text",
+   "label": "Stale Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_3",
+   "fieldtype": "Section Break",
+   "label": "Promotion"
+  },
+  {
+   "fieldname": "promoted_from",
+   "fieldtype": "Link",
+   "label": "Promoted From",
+   "options": "Insights Data Doc",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set by Claude to flag a note it believes a human should verify and promote.",
+   "fieldname": "proposed_for_promotion",
+   "fieldtype": "Check",
+   "label": "Proposed For Promotion"
+  },
+  {
+   "fieldname": "verified_on",
+   "fieldtype": "Datetime",
+   "label": "Verified On",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Insights",
+ "name": "Insights Data Doc",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Insights Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Insights User",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Insights Viewer"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}
