@@ -27,6 +27,7 @@ class InsightsSettings(Document):
         max_execution_time: DF.Int
         max_memory_usage: DF.Int
         max_records_to_sync: DF.Int
+        mcp_allowed_origins: DF.SmallText | None
         onboarding_complete: DF.Check
         query_result_expiry: DF.Int
         query_result_limit: DF.Int

@@ -13,6 +13,7 @@
   "enable_data_store",
   "apply_user_permissions",
   "allowed_origins",
+  "mcp_allowed_origins",
   "max_records_to_sync",
   "max_memory_usage",
   "max_execution_time",
@@ -115,6 +116,12 @@
    "fieldname": "allowed_origins",
    "fieldtype": "Data",
    "label": "Allowed Origins"
+  },
+  {
+   "fieldname": "mcp_allowed_origins",
+   "fieldtype": "Small Text",
+   "label": "MCP Allowed Origins",
+   "description": "Origins permitted to drive the MCP endpoint (insights.mcp.handle_mcp), one per line. This is NOT the iframe-embedding allowlist — see Allowed Origins above. An origin listed here can execute queries against every data source this site can reach. Leave empty unless a browser-based MCP client needs it; Claude Code, mcp-remote and server-side connectors send no Origin header at all."
   },
   {
    "fieldname": "max_records_to_sync",
