@@ -25,7 +25,7 @@ IMAGE_TAG="${1:-v16-0.1.0}"
 IMAGE="irfan33/insights:${IMAGE_TAG}"
 MEM="${MEM:-6g}"
 CPUS="${CPUS:-0-3}"
-REMOTE="${REMOTE:-upstream}"
+REMOTE="${REMOTE:-work}"
 
 PIN_REF=$(python3 -c "import json;print(json.load(open('docker/apps.json'))[0]['branch'])")
 PIN_URL=$(python3 -c "import json;print(json.load(open('docker/apps.json'))[0]['url'])")
@@ -46,17 +46,37 @@ HEAD_SHA=$(git rev-parse HEAD)
 say "branch ${BRANCH} @ ${HEAD_SHA:0:8}  ->  image ${IMAGE}"
 
 # --- 2. publish the code and move the pin ------------------------------------
+# The pin in apps.json may be either a branch or a tag; bench clones with
+# `git clone --branch <ref>`, which accepts both (but never a bare SHA).
+#   branch pin -> pushing the branch is enough, nothing else to move.
+#   tag pin    -> the tag has to be dragged to HEAD or the image is built from
+#                 whatever commit it pointed at last time.
+if git ls-remote --exit-code --heads "$PIN_URL" "$PIN_REF" >/dev/null 2>&1; then
+  PIN_KIND=branch
+elif git ls-remote --exit-code --tags "$PIN_URL" "$PIN_REF" >/dev/null 2>&1; then
+  PIN_KIND=tag
+else
+  PIN_KIND=unknown
+fi
+
 if [ "${SKIP_PUSH:-0}" != "1" ]; then
-  say "pushing ${BRANCH} and repointing tag ${PIN_REF}"
+  say "pushing ${BRANCH} to ${REMOTE} (pin ${PIN_REF} is a ${PIN_KIND})"
   git push "$REMOTE" "$BRANCH"
-  git tag -f -a "$PIN_REF" -m "Insights v3 + MCP, pinned for the Frappe v16 image"
-  git push --force "$REMOTE" "$PIN_REF"
+  if [ "$PIN_KIND" = "tag" ]; then
+    say "repointing tag ${PIN_REF} to HEAD"
+    git tag -f -a "$PIN_REF" -m "Insights v3 + MCP, pinned for the Frappe v16 image"
+    git push --force "$REMOTE" "$PIN_REF"
+  elif [ "$PIN_KIND" = "branch" ] && [ "$PIN_REF" != "$BRANCH" ]; then
+    echo "WARNING: apps.json pins branch '${PIN_REF}' but you are on '${BRANCH}'."
+    echo "         Pushing '${BRANCH}' does not move '${PIN_REF}'."
+  fi
 fi
 
 # --- 3. resolve what the image will ACTUALLY clone ----------------------------
 # ^{} dereferences an annotated tag to its commit.
 PIN_SHA=$(git ls-remote "$PIN_URL" "refs/tags/${PIN_REF}^{}" | cut -f1)
 [ -n "$PIN_SHA" ] || PIN_SHA=$(git ls-remote "$PIN_URL" "refs/tags/${PIN_REF}" | cut -f1)
+[ -n "$PIN_SHA" ] || PIN_SHA=$(git ls-remote "$PIN_URL" "refs/heads/${PIN_REF}" | cut -f1)
 if [ -z "$PIN_SHA" ]; then
   echo "ERROR: ${PIN_REF} does not resolve in ${PIN_URL}"; exit 1
 fi
