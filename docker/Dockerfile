@@ -1,8 +1,12 @@
-ARG PYTHON_VERSION=3.11.6
+# Frappe v16 declares requires-python = ">=3.14,<3.15". 3.14.6 is the exact
+# interpreter the MCP suite (234 tests) and the Phase 2 demo gate ran against.
+ARG PYTHON_VERSION=3.14.6
 ARG DEBIAN_BASE=bookworm
 FROM python:${PYTHON_VERSION}-slim-${DEBIAN_BASE} AS base
 
-ARG NODE_VERSION=20.19.2
+# Frappe v16 sets engines.node >= 24. 24.13.0 is what frappe_docker ships,
+# so it is the most-exercised pairing.
+ARG NODE_VERSION=24.13.0
 ENV NVM_DIR=/home/frappe/.nvm
 ENV PATH=${NVM_DIR}/versions/node/v${NODE_VERSION}/bin/:${PATH}
 
@@ -15,6 +19,12 @@ RUN useradd -ms /bin/bash frappe \
     nginx \
     gettext-base \
     file \
+    # WeasyPrint is Frappe v16's PDF engine (it replaced wkhtmltopdf) and
+    # dlopen's these at runtime, so they belong in base, not build.
+    libpango-1.0-0 \
+    libharfbuzz0b \
+    libpangoft2-1.0-0 \
+    libpangocairo-1.0-0 \
     mariadb-client \
     libpq-dev \
     postgresql-client \
@@ -74,7 +84,9 @@ USER frappe
 # Builder stage — init bench + install insights from fork via apps.json
 FROM build AS builder
 
-ARG FRAPPE_BRANCH=version-15
+# A tag, not a branch — this is the pin. v16.29.0 is the Frappe the MCP work
+# was developed and tested against on the dev bench.
+ARG FRAPPE_BRANCH=v16.29.0
 ARG FRAPPE_PATH=https://github.com/frappe/frappe
 ARG CACHE_BUST=""
 

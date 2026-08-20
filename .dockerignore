@@ -1,0 +1,18 @@
+# The image builds Insights from the remote fork named in docker/apps.json, so
+# nothing from this working tree reaches the image except the three files
+# re-included below.
+#
+# Deny-all first. That is what structurally keeps .git/config -- which currently
+# holds a plaintext GitHub PAT (docs/mcp-IMPLEMENTATION.md 8 I) -- out of the
+# build context, no matter how the Dockerfile is edited later. It also cuts the
+# context from ~1 GB (frontend/node_modules is 411 MB, insights/public/frontend
+# is 28 MB, plus .git) down to a few KB.
+#
+# WARNING: if you ever add `COPY . .` to the Dockerfile it will copy nothing.
+# Add explicit `!` re-includes for whatever that step needs, and think hard
+# before re-including .git.
+*
+
+!docker/apps.json
+!docker/resources/nginx-template.conf
+!docker/resources/nginx-entrypoint.sh
