@@ -113,10 +113,15 @@ def update_dashboard(
     add_items: list = None,
     remove_item_ids: list = None,
     add_filters: list = None,
-    reflow: bool = True,
+    reflow: bool = False,
     **_kw,
 ) -> str:
     """Add charts, text or filters to an existing dashboard, or remove items from it.
+
+    New items are placed below what is already there; everything already on the board
+    keeps its position, because a human may have arranged it. Pass `reflow: true` only
+    when you actually want the whole dashboard re-laid-out from scratch -- it discards
+    that arrangement.
 
     One write: the merged item list is laid out and saved in a single save, because
     `items` is a single JSON field and a per-item write would lose the others.
@@ -154,9 +159,11 @@ def update_dashboard(
             fix="Delete the dashboard with delete_item instead.",
         )
 
+    chart_types = _chart_types_for(merged)
     if reflow:
-        chart_types = _chart_types_for(merged)
         layout.reflow(merged, chart_types=chart_types)
+    else:
+        layout.place_new(merged, chart_types=chart_types)
 
     if title:
         doc.title = title
@@ -172,6 +179,8 @@ def update_dashboard(
         changes.append(f"removed {removed} item(s)")
     if title:
         changes.append("renamed it")
+    if reflow:
+        changes.append("re-laid-out every item")
 
     return render.cap("\n\n".join([
         f"Updated dashboard `{dashboard}`: {', '.join(changes) or 'no structural change'}.",

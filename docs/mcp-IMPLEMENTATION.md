@@ -18,7 +18,16 @@ this file tells you to load for the phase you are on.
 **Phase: 2 — feature-complete. All deliverables built and tested; demo gate passes over HTTP
 against `datalake`, and the charts were confirmed rendering in the browser.**
 
-Last updated: 2026-08-19 · Updated by: Phase 2 session 1
+**Deployment: the v16 image is built AND the stack is verified running.** `irfan33/insights:v16-0.1.0`, local only, not pushed.
+Stack `insights_v16` runs at `127.0.0.1:8090` (compose in
+`/www/server/panel/data/compose/insights_v16/`). `bench migrate` clean, MCP `initialize` and
+`tools/list` answer over HTTP with all 15 tools, and the **401 carries the v16 RFC 9728
+`WWW-Authenticate` header** that v15 cannot produce. **§8 Q's DuckDB SIGSEGV does not
+reproduce under gunicorn** — that gate is closed, see §8 W. Still owed: a real PostgreSQL
+query, a browser chart render, Claude Code connecting, and pushing the image. Work lives on
+branch **`v16-mcp`**; `version-3` is untouched because the v15 production image builds from it.
+
+Last updated: 2026-08-20 · Updated by: deployment session 1
 
 | Phase | State | Gate to enter |
 |---|---|---|
@@ -40,10 +49,10 @@ New modules: `insights/insights/doctype/insights_chart_v3/chart_operations.py` (
 `insights_chart_v3.py` gains `sync_data_query()` + `refresh_data_query(force=False)`;
 `compiler.py` gains `decompile(operations)` and a module-level `filter_rule()`.
 
-**234 MCP tests passing** across `test_transport` (20), `test_guards` (25),
-`test_compiler` (50), `test_compiler_integration` (6), `test_schemas` (6), `test_docs` (26),
+**255 MCP tests passing** across `test_transport` (20), `test_guards` (25),
+`test_compiler` (52), `test_compiler_integration` (6), `test_schemas` (6), `test_docs` (26),
 `test_chart_operations` (42), `test_chart_render` (8), `test_chartspec_roundtrip` (38),
-`test_chart_ts_drift` (1), `test_tools_phase2` (12). Existing suites unaffected:
+`test_chart_ts_drift` (1), `test_layout` (17), `test_tools_phase2` (14). Existing suites unaffected:
 `test_permissions` (8), `test_ibis_utils` (5), `test_warehouse` (3),
 `workbook/test_workbook` (6), `workbook/test_querying` (9) all green.
 
@@ -182,7 +191,7 @@ updating this section.
 | `InsightsChartv3.sync_data_query()` | P2 | P3 | Writes operations **and** `use_live_connection` from the source query; returns `{operations, use_live_connection, page_size}`. Omitting the propagation renders charts blank with no error. The MCP layer calls this, never `refresh_data_query`. |
 | `chartspec.resolve(spec, symbols) -> (chart_type, config, notes)` | P2 | P3 | Resolves against a `SymbolTable`, never a saved doc. `notes` are advisory strings for the tool response. |
 | `chartspec.decompile(chart_type, config)` / `compiler.decompile(operations)` | P2 | P3 | `(spec, None)` or `(None, reason)`. Never a lossy approximation. |
-| `layout.reflow(items, chart_types=)` | P2 | P3 | 20-column grid; filters take the top row. Preserves an existing `layout.i`, which is what `remove_item_ids` addresses. |
+| `layout.place_new(items, chart_types=)` / `layout.reflow(...)` | P2 | P3 | `place_new` is what `update_dashboard` uses: it gives a layout only to items that lack one and leaves the rest alone. `reflow` re-lays-out everything and is opt-in. Both preserve an existing `layout.i`, which is what `remove_item_ids` addresses. |
 | `dashboard.encode_filter_link` / `decode_filter_link` | P2 | P3 | The `` `query`.`column` `` encoding lives here in both directions and is never shown to the model. |
 
 ---
@@ -883,6 +892,18 @@ test against.** Every one of these paths passed its unit tests.
 9. **The layout generator preserves an existing `layout.i`.** It is what `remove_item_ids`
    addresses, so regenerating it under the caller silently breaks their next call.
 
+10. **`update_dashboard` does not reflow by default.** Reported after the first real
+    dashboard: `reflow` defaulted to true, so every call re-laid-out every item and threw
+    away whatever arrangement a human had made in the UI. Adding one chart should not move
+    the other five. `layout.place_new` now gives a layout only to items that have none —
+    mirroring `addChart`/`addText` (`dashboard.ts:77-118`), which put a new item at `x: 0`
+    on a fresh row below everything — and `reflow: true` remains available for "tidy the
+    whole thing up". One deliberate divergence from the UI: when the FIRST filter is added,
+    `positionNewFilter` (`dashboard.ts:149-153`) leaves it overlapping whatever sits at the
+    top and lets grid-layout-plus resolve the collision at render time. A headless writer
+    has no renderer, so we pre-apply the same push the overflow branch does; the stored
+    layout then matches what the UI ends up showing rather than what it briefly stores.
+
 ### U. Phase 2 measurements and one thing that does not exist
 
 **There is no render timeout, and that is a decision.** Design §7.3 asks for a 30s cap on
@@ -906,6 +927,14 @@ layer (`SET statement_timeout` / `MAX_EXECUTION_TIME`); it is backend-specific, 
 for DuckDB, and out of Phase 2. **Do not rediscover `signal.alarm`.**
 
 **Three more things measured rather than reasoned about:**
+
+0. **Saving an existing dashboard needs Redis running.** `before_save` calls
+   `enqueue_update_dashboard_preview` (`insights_dashboard_v3.py:126-138`), and
+   `frappe.enqueue` under `frappe.flags.in_test` goes to the queue rather than running
+   inline (`background_jobs.py:143-152`). So `test_tools_phase2`'s dashboard tests fail
+   with `ConnectionError: 127.0.0.1:11001` when the bench group is down — which, per §8 Q,
+   is what happens to the WHOLE group after a DuckDB segfault. The job itself never runs
+   without a worker, so no outbound call to the preview service is made from the suite.
 
 1. **`@transactional` rolls back the whole request, not just the tool's writes.** A
    `ToolError` raised by `delete_item` in the middle of a test discarded everything the test
@@ -952,6 +981,230 @@ screenshot proving they render. Delete it when it stops being useful as evidence
 An API key/secret was generated for `irfan@sosco.id` for MCP testing (none existed before).
 Separately and unrelated: the `upstream` git remote contains a **plaintext GitHub PAT**;
 it needs rotating and the remote re-adding without credentials.
+
+### V. The v16 Docker image — built, and what the build cost taught us
+
+**2026-08-20. `irfan33/insights:v16-0.1.0` exists locally, 2.21 GB, amd64.** Not pushed to
+Docker Hub yet, and no v16 stack has been brought up.
+
+**Branching.** The Docker work lives on **`v16-mcp`**, never on `version-3`. `version-3` is
+the branch the running v15 production image builds from, and `.github/workflows/build.yml`
+tags `latest` off it. A v16 Dockerfile landing there would hand the next v15 rebuild a
+Python 3.14 base. The fork's `version-3` is deliberately still at `109190e9` — it does not
+even carry the eight MCP commits.
+
+**The pin is a git tag, and it has to be.** `bench init` clones with
+`git clone --branch <ref> --depth 1`, which accepts branches and tags but **never a bare
+commit SHA**. So `docker/apps.json` names the tag `insights-v16-2026.08.20`, and that tag is
+force-moved when a fix lands. Consequence for CI: keying `CACHE_BUST` on the *contents* of
+`apps.json` would not work — the filename is identical across a repoint, so a cached
+`bench init` layer would ship stale application code. The workflow resolves the tag to a
+commit with `git ls-remote` and keys on that instead.
+
+**Three failed builds, and the numbers they produced.** All inside a memory-fenced cgroup,
+because this host runs four compose stacks in 16 GB with swap 85% full.
+
+| cgroup | V8 cap | Result | What it actually meant |
+|---|---|---|---|
+| 3.0 GiB | 2048 MB | exit **137**, `Killed` | The cgroup was binding. Three processes share it: yarn, frappe's esbuild, the insights vite build. |
+| 4.5 GiB | 2048 MB | exit **134**, `Ineffective mark-compacts near heap limit` | The cgroup was no longer binding; V8's own ceiling was. |
+| 6.0 GiB | 4096 MB | **success** | |
+
+**137 and 134 point in opposite directions.** 137 means the cgroup needs more room or V8
+needs less; 134 means V8 needs more. An earlier draft of the plan advised *lowering* memory
+on a 137, which would have made the second attempt unreadable. Read the exit code first.
+
+**`ENV NODE_OPTIONS` in the Dockerfile does nothing.** `frappe/build.py:297` `get_node_env()`
+returns `NODE_OPTIONS=--max_old_space_size={get_safe_max_old_space_size()}` and
+`frappe/commands/__init__.py:69` does `env = dict(environ, **env)` — frappe's value wins over
+anything inherited. Worse, `get_safe_max_old_space_size()` is
+`max(1024, int(psutil.virtual_memory().total * 0.75))`, and inside a container psutil reads
+the **host's** `/proc/meminfo`, not the cgroup — computing 12288 MB against a 3 GiB budget.
+The cap only works in `frontend/package.json`'s build script, which is the innermost process.
+
+**The next lever, pre-approved but not yet used.** `frontend/vite.config.js` sets
+`sourcemap: true`; the image ships 396 asset files including `.js.map`. Turning it off for
+production cuts the heap requirement, shrinks the image, and stops publishing source maps at
+`/assets/insights/frontend/`. Irfan approved this on 2026-08-20 if the heap is ever tight
+again. It was not needed at 6 GiB / 4096.
+
+**GitHub Actions is not available.** The workflow was rewritten and is correct, but every run
+fails in two seconds with zero steps and the annotation *"The job was not started because
+your account is locked due to a billing issue."* That is account-level, not configuration —
+it also explains the failed `version-3` run of 2026-08-07 and why CI never produced the `:dev`
+tag. **Do not debug the workflow YAML; check billing.** (One real latent bug was fixed while
+chasing this: the `inputs` context only exists on `workflow_dispatch`/`workflow_call` runs, so
+referencing it from a workflow that also triggers on `push` fails compilation. Use
+`github.event.inputs`.)
+
+**Verified in the image** (`docker run --rm irfan33/insights:v16-0.1.0 …`):
+
+- Python **3.14.6**, frappe **16.29.0**, insights **3.11.2**, node **v24.13.0**
+- `insights/mcp/` complete — all 13 modules, all 7 tool modules, `insights_data_doc` doctype
+- Frontend built: `www/insights.html` present, `public/frontend` 28 MB, 396 hashed assets.
+  These are gitignored, so their presence is the only proof the in-image vite build ran.
+- **Vite 4.4.6 runs on Node 24.13.0.** This was ranked the top build risk — the frontend
+  declares only `node >=18` while v16 forces >=24. It is not a problem.
+- **Every cp314 wheel resolved.** pyarrow 25.0.1, duckdb 1.4.5, psycopg 3.3.4,
+  pydantic-core, rpds-py, mysqlclient 2.2.7 — no Rust build, no missing wheel.
+- **DuckDB smoke test passes**: `ibis.duckdb.connect()` → create table → aggregate, exit 0.
+
+### W. ⚠️→✅ The DuckDB SIGSEGV does NOT reproduce under gunicorn — §8 Q's owed test is CLOSED
+
+**2026-08-20, measured in the `insights_v16` container stack.** This was the single largest
+open risk in the project and the stated gate on cutover. It passed.
+
+Same ingredients that crashed on the dev bench: **duckdb 1.4.5, Python 3.14.6, ibis 11.0.0**,
+the bundled `demo_data` DuckDB source, driven over HTTP through the `run_query` MCP tool —
+i.e. the exact fault path `guards.execute_transient → insights_query_v3.execute →
+ibis_utils.execute_ibis_query → ibis/backends/duckdb`.
+
+| Call | Result |
+|---|---|
+| `run_query` orders limit 5 | ok, real rows |
+| `describe_table` orders | ok, 909 B |
+| `run_query` group_by + count + sort | ok, 308 B |
+| `distinct_values` order_status | ok, 365 B |
+| `run_query` 200-row scan | ok, 19 885 B (under the 20 KB cap) |
+
+`Booting worker` count **1 before, 1 after**. Zero `SIGKILL` / `SIGSEGV` / `WORKER TIMEOUT` /
+`code 139`. `RestartCount=0`.
+
+**What actually differed, and why this is believable rather than lucky.** §8 Q noted the crash
+reproduced *only* in the werkzeug request-handler context — in-process worked, a plain
+`threading.Thread` worked. The dev bench serves through `bench serve`, i.e.
+`run_simple(..., threaded=True)`. The container serves through
+`gunicorn --worker-class=gthread --preload`. So the werkzeug development server was the
+variable all along, not duckdb-on-3.14 as such. **`--preload` was the prime suspect in the
+fallback list and turns out not to be the problem.**
+
+**Scope of the claim.** This clears DuckDB *live queries* over HTTP under gunicorn. It does not
+by itself clear a heavy warehouse import, nor does it mean `bench serve` is safe — do not go
+back to reading an empty response on the dev bench as a transport bug (§8 Q still applies
+there). And `duckdb~=1.4.3` floats: hard-pin it now that 1.4.5 is known good on this path.
+
+### Deployment verification, 2026-08-20 — what passed in the container
+
+Stack `insights_v16`, image `irfan33/insights:v16-0.1.0`, fresh empty site `frontend`.
+
+| # | Check | Result |
+|---|---|---|
+| 7.2 | Versions | Python 3.14.6 · frappe 16.29.0 · insights 3.11.2 · node v24.13.0 |
+| 7.3 | Frontend artifacts | `www/insights.html`, `public/frontend` 28 MB, 396 hashed assets |
+| 7.4 | DuckDB ABI smoke | ok |
+| 7.5 | Containers | 9 up, db + frontend healthy, **RestartCount 0 everywhere** |
+| 7.6 | Site + migrate | `/` 200, `/insights` 200, `bench migrate` exit 0 |
+| 7.6c | Schema | `Insights Data Doc` present, `mcp_allowed_origins` present |
+| 7.7 | **MCP 401 gate** | `401` + `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource"` — **v16 RFC 9728 is live; on v15 this header does not exist** |
+| 7.8 | `initialize` | 200, `protocolVersion 2025-03-26`, capabilities `tools` + `prompts` |
+| 7.8b | `tools/list` | **15 tools**, every one with a populated `inputSchema.properties`; 7 `readOnlyHint`, `delete_item` `destructiveHint` |
+| 7.10 | **DuckDB under gunicorn** | **PASS** — see §8 W |
+
+**Still not done:** 7.9 (a query against a real PostgreSQL source — the fresh site has none
+connected), 7.11 (chart render verified in a browser), 7.12 (Claude Code connects to the
+container endpoint), and pushing the image to Docker Hub.
+
+**Two things worth knowing about this stack.**
+
+`enable_permissions = 0` on the new site, the default. Any authenticated MCP caller can read
+every table on every data source it can reach. That is UI parity, but MCP widens the blast
+radius — decide deliberately before cutover.
+
+**`WWW-Authenticate` drops the port — confirmed as Frappe behaviour, not misconfiguration.**
+Reproduced against two different `host_name` values: with `http://127.0.0.1:8090` the header
+advertises `http://127.0.0.1/...`, and with `http://100.101.146.23:8090` it advertises
+`http://100.101.146.23/...`. The port is stripped either way, so `get_resource_url()` is
+normalising it away rather than reading a bad config. Harmless for the Claude Code path
+(static `Authorization: token k:s`, no discovery), but an OAuth client following the metadata
+URL lands on port 80. **Fix or work around before any claude.ai Connectors test** — the
+obvious workaround is to front the stack on a real 443 (e.g. `tailscale serve`, or the aaPanel
+nginx vhost) so there is no port to drop. ⚠️ UNVERIFIED: the exact line in `get_resource_url()`
+responsible.
+
+### Tailnet access, 2026-08-20
+
+The stack is reachable from any device on the `sosco.id` tailnet at
+**`http://100.101.146.23:8090`** (this node is `nanotekno-vm`; the MagicDNS name
+`nanotekno-vm.tail40e94d.ts.net:8090` resolves on tailnet clients too).
+
+`docker-compose.yaml` binds the frontend **twice, and never to `0.0.0.0`**:
+
+```yaml
+ports:
+  - "127.0.0.1:${PORT:-8090}:8080"
+  - "${TAILSCALE_IP:?TAILSCALE_IP not set}:${PORT:-8090}:8080"
+```
+
+`TAILSCALE_IP=100.101.146.23` lives in `.env`. Binding to the `tailscale0` address rather than
+`0.0.0.0` keeps the port off the LAN and off the public interface entirely — this is narrower
+than a firewall rule, because the socket simply is not there. **Consequence: if `tailscaled` is
+down when the container starts, the bind fails and the container will not come up.**
+
+**No firewall change was needed, and none should be added.** `ufw` is active with
+`INPUT policy DROP`, but Tailscale's own `ts-input` chain is rule #1 in `INPUT` and carries
+`ACCEPT all -- tailscale0` (184K packets counted), which terminates traversal before ufw's
+deny. Adding a ufw rule for 8090 would widen exposure to every interface for no gain.
+
+**Plain HTTP is deliberate.** Irfan's call: tailnet traffic is already WireGuard-encrypted, so
+TLS inside it buys little here. Note `tailscale serve` is **already in use on this host** —
+`https://nanotekno-vm.tail40e94d.ts.net/` proxies to `localhost:8888` — so a future TLS setup
+must claim a different port (e.g. `--https=8443`), not `/`.
+
+**Verified end to end over `100.101.146.23:8090`:** `/` and `/insights` return 200; the MCP
+endpoint returns the 401 + `WWW-Authenticate` gate; `initialize` answers `2025-03-26`;
+`tools/list` returns 15 tools; `run_query` against the DuckDB `demo_data` source returns rows.
+Worker boots still 1, zero crashes, `RestartCount=0`.
+
+`host_name` is now `http://100.101.146.23:8090`. It can only be one value, and the tailnet URL
+is the one that matters — server-generated absolute links pointing at `127.0.0.1` would break
+for every remote client.
+
+#### Connecting a Claude Code client to this stack
+
+Credentials live in `/www/server/panel/data/compose/insights_v16/.mcp-token` (root, 0600),
+holding `api_key:api_secret` for Administrator. Read it with `sudo`; do not copy it into a
+file the repo can see.
+
+**From this server** — the `$(...)` keeps the secret out of shell history:
+
+```bash
+claude mcp add --transport http insights-v16 \
+  http://100.101.146.23:8090/api/method/insights.mcp.handle_mcp \
+  --header "Authorization: token $(sudo cat /www/server/panel/data/compose/insights_v16/.mcp-token)"
+```
+
+**From another tailnet device** (MacBook etc.) — same URL, token fetched over ssh:
+
+```bash
+claude mcp add --transport http insights-v16 \
+  http://100.101.146.23:8090/api/method/insights.mcp.handle_mcp \
+  --header "Authorization: token $(ssh irfan@100.101.146.23 'sudo cat /www/server/panel/data/compose/insights_v16/.mcp-token')"
+```
+
+Add `--scope user` to make it available in every project rather than only the one you run it
+in (default scope is `local`, keyed to the current directory in `~/.claude.json`).
+
+Remove with `claude mcp remove insights-v16`. Verify with `claude mcp list` — expect
+`✔ Connected`. Tools may not appear until the Claude Code session restarts.
+
+**Name it `insights-v16`, not `insights`.** A separate `insights` entry already points at the
+dev bench on `localhost:8001`; the two are different sites with different data and should not
+share a name.
+
+⚠️ **This grants full Administrator access over the tailnet.** Combined with
+`enable_permissions = 0`, the holder can read every table on every data source the site can
+reach. Acceptable for a disposable test stack on a private tailnet; do not carry the pattern
+to production.
+
+**Credentials.** `/www/server/panel/data/compose/insights_v16/.mcp-token` (root, 0600) holds
+`api_key:api_secret` for Administrator on the v16 site. `.env` in the same folder holds freshly
+generated `ADMIN_PASSWORD` and `MYSQL_ROOT_PASSWORD` — deliberately **not** the v15 ones.
+
+**Resolved stack, for reproducibility:** duckdb 1.4.5 · ibis-framework 11.0.0 ·
+pyarrow 25.0.1 · psycopg 3.3.4 · pandas 2.3.3 · Werkzeug 3.1.6 · pydantic 2.12.5 ·
+sqlglot 27.29.0 · jsonschema 4.26.0 · mysqlclient 2.2.7 · frappe-mcp 0.1.1 (the fork).
+Note `duckdb~=1.4.3` floats within 1.4.x in both frappe and insights — two builds a month
+apart can differ in exactly the component under suspicion. Hard-pin it once §7.10 passes.
 
 ---
 

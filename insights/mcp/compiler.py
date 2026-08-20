@@ -947,7 +947,16 @@ def decompile(operations) -> tuple[dict | None, str | None]:
     query rather than a wrong reading. The raw operations are returned alongside either
     way, so `None` costs the caller nothing.
     """
-    ops = frappe.parse_json(operations) if isinstance(operations, str) else (operations or [])
+    if isinstance(operations, str):
+        # `json`, not `frappe.parse_json`: this module imports no frappe at all, which is
+        # what makes test_compiler.py a fixture-free UnitTestCase. Malformed JSON comes
+        # back as a reason rather than an exception -- decompile never raises.
+        try:
+            operations = json.loads(operations)
+        except ValueError:
+            return None, "the stored operations are not valid JSON"
+
+    ops = operations or []
     if not ops:
         return None, "the query has no operations"
 

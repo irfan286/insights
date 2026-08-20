@@ -596,6 +596,23 @@ class TestDecompile(UnitTestCase):
         self.assertIsNone(spec)
         self.assertIn("expression measure", reason)
 
+    def test_a_json_string_is_accepted(self):
+        """`Insights Query v3.operations` is a JSON field, so it arrives as a string."""
+        import json as _json
+
+        spec, reason = decompile(
+            _json.dumps([
+                {"type": "source", "table": {"type": "query", "query_name": "q1", "workbook": ""}}
+            ])
+        )
+        self.assertIsNone(reason)
+        self.assertEqual(spec["from"], {"query": "q1"})
+
+    def test_malformed_json_is_reported_not_raised(self):
+        spec, reason = decompile("{not json")
+        self.assertIsNone(spec)
+        self.assertIn("not valid JSON", reason)
+
     def test_an_empty_operation_list_is_reported_not_crashed(self):
         spec, reason = decompile([])
         self.assertIsNone(spec)

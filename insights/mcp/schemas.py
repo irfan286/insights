@@ -379,7 +379,7 @@ MEASURE_REF = {
     "properties": {
         "column": {"type": "string", "description": "omit with fn=count to count rows"},
         "fn": {
-            "enum": AGGREGATIONS + ["none"],
+            "enum": [*AGGREGATIONS, "none"],
             "description": (
                 "'none' means the column is ALREADY aggregated by the bound query: it "
                 "keeps the column's own name and re-aggregates with sum, which is the "
@@ -626,8 +626,12 @@ UPDATE_DASHBOARD = {
         "add_filters": {"type": "array", "items": DASHBOARD_FILTER},
         "reflow": {
             "type": "boolean",
-            "default": True,
-            "description": "re-run the layout generator over the merged item list",
+            "default": False,
+            "description": (
+                "re-lay-out EVERY item from scratch. Off by default because it discards "
+                "any arrangement a human made in the UI. New items are placed below the "
+                "existing ones either way."
+            ),
         },
     },
     "required": ["dashboard"],

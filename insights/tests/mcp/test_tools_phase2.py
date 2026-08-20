@@ -168,6 +168,59 @@ class TestPhase2Tools(InsightsIntegrationTestCase):
         self.assertFalse(frappe.db.exists(DT.CHART, chart))
         self.assertFalse(frappe.db.exists(DT.QUERY, data_query))
 
+    def test_updating_a_dashboard_does_not_rearrange_what_is_already_on_it(self):
+        """Reported after the first real dashboard: every update_dashboard reflowed the
+        whole board, so an arrangement made in the UI came back scrambled."""
+        query, _ = self.save()
+        chart = _first_backtick(
+            create_chart(query=query, title=f"{PREFIX} Chart", spec=CHART_SPEC, render="skip")
+        )
+        chart2 = _first_backtick(
+            create_chart(query=query, title=f"{PREFIX} Chart 2", spec=CHART_SPEC, render="skip")
+        )
+        dashboard = _first_backtick(
+            create_dashboard(title=f"{PREFIX} Dashboard", items=[{"type": "chart", "chart": chart}])
+        )
+
+        # A human drags the chart somewhere deliberate.
+        doc = frappe.get_doc(DT.DASHBOARD, dashboard)
+        items = frappe.parse_json(doc.items)
+        items[0]["layout"] = dict(items[0]["layout"], x=6, y=4, w=14, h=11)
+        doc.items = items
+        doc.save()
+
+        update_dashboard(dashboard=dashboard, add_items=[{"type": "chart", "chart": chart2}])
+
+        items = frappe.parse_json(frappe.get_doc(DT.DASHBOARD, dashboard).items)
+        moved = next(i for i in items if i["chart"] == chart)
+        added = next(i for i in items if i["chart"] == chart2)
+        self.assertEqual(
+            {k: moved["layout"][k] for k in ("x", "y", "w", "h")},
+            {"x": 6, "y": 4, "w": 14, "h": 11},
+            "the hand-placed chart moved",
+        )
+        self.assertEqual(added["layout"]["y"], 15, "the new chart should land below it")
+
+    def test_reflow_true_still_re_lays_out_everything(self):
+        query, _ = self.save()
+        chart = _first_backtick(
+            create_chart(query=query, title=f"{PREFIX} Chart", spec=CHART_SPEC, render="skip")
+        )
+        dashboard = _first_backtick(
+            create_dashboard(title=f"{PREFIX} Dashboard", items=[{"type": "chart", "chart": chart}])
+        )
+        doc = frappe.get_doc(DT.DASHBOARD, dashboard)
+        items = frappe.parse_json(doc.items)
+        items[0]["layout"] = dict(items[0]["layout"], x=6, y=4)
+        doc.items = items
+        doc.save()
+
+        response = update_dashboard(dashboard=dashboard, reflow=True)
+
+        items = frappe.parse_json(frappe.get_doc(DT.DASHBOARD, dashboard).items)
+        self.assertEqual((items[0]["layout"]["x"], items[0]["layout"]["y"]), (0, 0))
+        self.assertIn("re-laid-out", response)
+
     def test_a_filter_on_a_column_the_query_does_not_emit_is_refused(self):
         query, _ = self.save()
         with db_connections():
