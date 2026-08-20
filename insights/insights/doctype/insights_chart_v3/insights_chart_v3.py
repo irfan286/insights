@@ -4,6 +4,10 @@
 import frappe
 from frappe.model.document import Document
 
+from insights.insights.doctype.insights_chart_v3 import chart_operations
+from insights.insights.doctype.insights_chart_v3.chart_operations import (
+    build_data_query_operations,
+)
 from insights.insights.doctype.insights_query_v3.insights_query_v3 import import_query
 from insights.utils import deep_convert_dict_to_dict
 
@@ -76,6 +80,59 @@ class InsightsChartv3(Document):
         )
         doc.db_insert()
         self.data_query = doc.name
+
+    def sync_data_query(self) -> dict:
+        """Write operations + use_live_connection onto the hidden data_query. No execute.
+
+        Until now this lived only in the browser (`chart.ts:58-92`), which meant a chart
+        created without a browser could never render. `chart_operations` is the port; this
+        is the doc-level half of it.
+
+        Split from `refresh_data_query` on purpose: the MCP layer calls THIS one and then
+        renders through `insights.mcp.guards.execute_saved`, so `insights/mcp/` keeps
+        exactly one file containing `.execute(` (design §8.3). A guard test asserts the
+        MCP layer never reaches for `refresh_data_query`.
+        """
+        if not self.query:
+            frappe.throw("This chart is not bound to a query.")
+
+        if not self.data_query:
+            # before_save mints it, so this only fires for a doc built in memory.
+            self.set_data_query()
+            self.db_set("data_query", self.data_query, update_modified=False)
+
+        config = chart_operations.normalize_config(self.chart_type, self.config)
+        operations = build_data_query_operations(self)
+
+        data_query = frappe.get_doc("Insights Query v3", self.data_query)
+        data_query.operations = operations
+
+        # NOT optional. `set_data_query` creates this doc with only {doctype, workbook},
+        # and `use_live_connection` defaults to 0. IbisQueryBuilder then pushes that 0 into
+        # the UPSTREAM source query (`ibis_utils.py:170`), so a table that was never
+        # imported resolves to an empty temp table and the chart renders zero rows with no
+        # error at all. The frontend does this at `chart.ts:90`.
+        source_query = frappe.get_cached_doc("Insights Query v3", self.query)
+        data_query.use_live_connection = source_query.use_live_connection
+
+        data_query.save()
+
+        return {
+            "operations": operations,
+            "use_live_connection": data_query.use_live_connection,
+            "page_size": config.get("limit") or 100,
+        }
+
+    @frappe.whitelist()
+    def refresh_data_query(self, force=False):
+        """Sync the hidden data_query and execute it. The UI's path.
+
+        Phase 3 points `chart.ts:refresh()` here so there is one implementation.
+        """
+        plan = self.sync_data_query()
+        return frappe.get_doc("Insights Query v3", self.data_query).execute(
+            force=force, page=1, page_size=plan["page_size"]
+        )
 
     @frappe.whitelist()
     def export(self):
