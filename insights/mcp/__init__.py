@@ -90,6 +90,7 @@ def handle_mcp():
     # Importing the tools package runs every @mcp.tool decorator. Done here rather than
     # at module scope so a worker that never receives an MCP request never pays for it.
     # add_tool writes into an OrderedDict keyed by name, so this is idempotent.
+    import insights.mcp.prompts  # noqa: F401
     import insights.mcp.tools  # noqa: F401
 
     # Read by InsightsDataDoc.validate() to enforce that MCP may only ever write the

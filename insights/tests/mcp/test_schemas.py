@@ -26,6 +26,14 @@ TOOL_SCHEMAS = {
     "run_query": schemas.RUN_QUERY,
     "get_docs": schemas.GET_DOCS,
     "write_ai_note": schemas.WRITE_AI_NOTE,
+    "save_query": schemas.SAVE_QUERY,
+    "list_workbooks": schemas.LIST_WORKBOOKS,
+    "get_item": schemas.GET_ITEM,
+    "delete_item": schemas.DELETE_ITEM,
+    "create_chart": schemas.CREATE_CHART,
+    "update_chart": schemas.UPDATE_CHART,
+    "create_dashboard": schemas.CREATE_DASHBOARD,
+    "update_dashboard": schemas.UPDATE_DASHBOARD,
 }
 
 

@@ -16,7 +16,7 @@ is Title-Case, and a missing `limit` silently becomes LIMIT 1.
 
 from frappe.tests import UnitTestCase
 
-from insights.mcp.compiler import StaticSchemaResolver, compile
+from insights.mcp.compiler import StaticSchemaResolver, compile, decompile
 from insights.mcp.errors import ToolError
 
 RESOLVER = StaticSchemaResolver(
@@ -473,3 +473,130 @@ class TestExpressionValidation(UnitTestCase):
              ):
             ops, _ = compile_spec(self.BASE)
         self.assertTrue([o for o in ops if o["type"] == "mutate"])
+
+
+class TestDecompile(UnitTestCase):
+    """`operations[]` -> QuerySpec, for `get_item(include_spec=true)`.
+
+    Eager to give up on purpose: the model edits what it is handed and submits it back, so
+    an approximation is a wrong query rather than a wrong reading.
+    """
+
+    def round_trip(self, spec):
+        operations, _ = compile_spec(spec)
+        decompiled, reason = decompile(operations)
+        self.assertIsNone(reason)
+        return decompiled
+
+    def test_anything_the_compiler_emits_comes_back(self):
+        spec = {
+            "from": {"data_source": "demo_data", "table": "orders"},
+            "where": [{"column": "order_status", "op": "not_in", "value": ["delivered"]}],
+            "group_by": [
+                {"column": "order_purchase_timestamp", "granularity": "month", "as": "order_month"}
+            ],
+            "aggregate": [{"column": "qty", "fn": "sum"}, {"fn": "count"}],
+            "having": [{"column": "count_of_rows", "op": ">", "value": 10}],
+            "sort": [{"column": "order_month", "desc": False}],
+            "limit": 500,
+        }
+        self.assertEqual(self.round_trip(spec), spec)
+
+    def test_a_recompile_of_the_decompiled_spec_is_identical(self):
+        """The property that matters: what comes back must rebuild the same query."""
+        spec = {
+            "from": {"data_source": "demo_data", "table": "orders"},
+            "group_by": [{"column": "order_date_str", "granularity": "year"}],
+            "aggregate": [{"fn": "count"}],
+        }
+        operations, _ = compile_spec(spec)
+        again, _ = compile_spec(self.round_trip(spec))
+        self.assertEqual(again, operations)
+
+    def test_the_auto_cast_is_not_echoed_back_as_an_explicit_one(self):
+        """Echoing it would make the next compile emit the cast twice."""
+        spec = {
+            "from": {"data_source": "demo_data", "table": "orders"},
+            "group_by": [{"column": "order_date_str", "granularity": "year"}],
+            "aggregate": [{"fn": "count"}],
+        }
+        self.assertNotIn("cast", self.round_trip(spec))
+
+    def test_a_query_source_round_trips(self):
+        operations = [
+            {"type": "source", "table": {"type": "query", "query_name": "q1", "workbook": ""}}
+        ]
+        spec, reason = decompile(operations)
+        self.assertIsNone(reason)
+        self.assertEqual(spec["from"], {"query": "q1"})
+
+    def test_a_pivot_round_trips(self):
+        spec = {
+            "from": {"data_source": "demo_data", "table": "orders"},
+            "group_by": [{"column": "order_status"}, {"column": "customer_id"}],
+            "aggregate": [{"column": "qty", "fn": "sum"}],
+            "pivot_on": {"column": "customer_id", "max_values": 5},
+        }
+        self.assertEqual(self.round_trip(spec), spec)
+
+    def test_an_unexpressible_operation_is_named(self):
+        spec, reason = decompile([
+            {"type": "source", "table": {"type": "table", "data_source": "d", "table_name": "t"}},
+            {"type": "union", "table": {}},
+        ])
+        self.assertIsNone(spec)
+        self.assertIn("union", reason)
+
+    def test_a_nested_filter_group_is_refused(self):
+        spec, reason = decompile([
+            {"type": "source", "table": {"type": "table", "data_source": "d", "table_name": "t"}},
+            {
+                "type": "filter_group",
+                "logical_operator": "And",
+                "filters": [{"type": "filter_group", "logical_operator": "Or", "filters": []}],
+            },
+        ])
+        self.assertIsNone(spec)
+        self.assertIn("nested filter group", reason)
+
+    def test_two_aggregation_steps_are_refused(self):
+        summarize = {"type": "summarize", "measures": [], "dimensions": []}
+        spec, reason = decompile([
+            {"type": "source", "table": {"type": "table", "data_source": "d", "table_name": "t"}},
+            summarize,
+            summarize,
+        ])
+        self.assertIsNone(spec)
+        self.assertIn("two aggregation steps", reason)
+
+    def test_operations_out_of_canonical_order_are_refused(self):
+        spec, reason = decompile([
+            {"type": "source", "table": {"type": "table", "data_source": "d", "table_name": "t"}},
+            {"type": "summarize", "measures": [], "dimensions": []},
+            {"type": "join", "table": {}, "join_condition": {}},
+        ])
+        self.assertIsNone(spec)
+        self.assertIn("order", reason)
+
+    def test_an_expression_measure_is_refused(self):
+        spec, reason = decompile([
+            {"type": "source", "table": {"type": "table", "data_source": "d", "table_name": "t"}},
+            {
+                "type": "summarize",
+                "dimensions": [],
+                "measures": [
+                    {
+                        "measure_name": "margin",
+                        "expression": {"type": "expression", "expression": "a - b"},
+                        "data_type": "Decimal",
+                    }
+                ],
+            },
+        ])
+        self.assertIsNone(spec)
+        self.assertIn("expression measure", reason)
+
+    def test_an_empty_operation_list_is_reported_not_crashed(self):
+        spec, reason = decompile([])
+        self.assertIsNone(spec)
+        self.assertIn("no operations", reason)

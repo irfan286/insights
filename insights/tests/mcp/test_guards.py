@@ -207,6 +207,111 @@ class TestMcpStructuralGuards(UnitTestCase):
                     self.fail(f"{_rel(path)}:{node.lineno} MCP resources are out of scope (rule 8)")
 
 
+class TestPhase2StructuralGuards(UnitTestCase):
+    """Rules the chart and dashboard layer needs. Each one pins a silent failure."""
+
+    CHART_OPERATIONS = (
+        Path(frappe.get_app_path("insights"))
+        / "insights"
+        / "doctype"
+        / "insights_chart_v3"
+        / "chart_operations.py"
+    )
+    CHART_CONTROLLER = CHART_OPERATIONS.parent / "insights_chart_v3.py"
+
+    def test_mcp_never_calls_refresh_data_query(self):
+        """The MCP layer renders through guards.execute_saved, never the doctype's own
+        execute path -- that is what keeps rule 3 (one `.execute(` site) meaningful rather
+        than merely literally true."""
+        for path, tree in _modules():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and node.attr == "refresh_data_query":
+                    self.fail(
+                        f"{_rel(path)} calls refresh_data_query. Call sync_data_query() and "
+                        f"render through guards.execute_saved -- see §3 rule 3."
+                    )
+
+    def test_chart_operations_is_a_pure_port(self):
+        """It must stay unit-testable and free of the render path, or the port and the
+        TypeScript drift with nothing cheap enough to catch it."""
+        tree = ast.parse(self.CHART_OPERATIONS.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in ("execute", "get_doc", "get_all"):
+                self.fail(f"chart_operations.py must not call {node.attr}(); keep it pure.")
+            if isinstance(node, ast.Attribute) and node.attr == "db":
+                self.fail("chart_operations.py must not touch frappe.db; keep it pure.")
+
+    def test_the_chart_controller_executes_in_exactly_one_place(self):
+        tree = ast.parse(self.CHART_CONTROLLER.read_text())
+        sites = [
+            fn.name
+            for fn in ast.walk(tree)
+            if isinstance(fn, ast.FunctionDef)
+            for call in ast.walk(fn)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "execute"
+        ]
+        self.assertEqual(sites, ["refresh_data_query"], f"unexpected execute sites: {sites}")
+
+    def test_sync_data_query_propagates_use_live_connection(self):
+        """One assignment, and omitting it renders every chart blank with no error
+        (design §7.2). Cheap to pin, expensive to rediscover."""
+        source = self.CHART_CONTROLLER.read_text()
+        self.assertIn("data_query.use_live_connection = source_query.use_live_connection", source)
+
+    def test_no_tool_supplies_a_data_query(self):
+        """`data_query` is read_only and minted by set_data_query()'s raw db_insert.
+        Supplying one orphans a query row that nothing will ever delete."""
+        for path, tree in _modules():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.keyword) and node.arg == "data_query":
+                    self.fail(f"{_rel(path)} passes data_query=")
+                if (
+                    isinstance(node, ast.Assign)
+                    and any(
+                        isinstance(t, ast.Attribute) and t.attr == "data_query" for t in node.targets
+                    )
+                ):
+                    self.fail(f"{_rel(path)} assigns .data_query")
+
+    def test_no_tool_writes_linked_charts(self):
+        """It is derived in before_save (`insights_dashboard_v3.py:82-86`); writing it
+        corrupts the child table."""
+        for path, tree in _modules():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and node.value == "linked_charts":
+                    self.fail(f"{_rel(path)} mentions linked_charts")
+
+    def test_delete_item_cannot_target_a_workbook(self):
+        """Non-negotiable #10. Insights Workbook.on_trash force-deletes everything in it."""
+        from insights.mcp.schemas import DELETE_ITEM
+
+        self.assertNotIn("workbook", DELETE_ITEM["properties"]["type"]["enum"])
+
+    def test_every_tool_module_is_imported(self):
+        """A module missing from tools/__init__.py registers nothing and fails no other
+        test. This is the only thing standing between a typo and a vanished tool."""
+        registration = (MCP_ROOT / "tools" / "__init__.py").read_text()
+        for path in sorted((MCP_ROOT / "tools").glob("*.py")):
+            if path.name == "__init__.py":
+                continue
+            with self.subTest(module=path.stem):
+                self.assertIn(path.stem, registration)
+
+    def test_the_registered_tool_surface_has_not_shrunk(self):
+        import insights.mcp.tools  # noqa: F401
+        from insights.mcp import mcp
+
+        expected = {
+            "list_data_sources", "list_tables", "describe_table", "distinct_values",
+            "get_docs", "write_ai_note", "run_query",
+            "save_query", "list_workbooks", "get_item", "delete_item",
+            "create_chart", "update_chart", "create_dashboard", "update_dashboard",
+        }
+        self.assertLessEqual(expected, set(mcp._tool_registry))
+
+
 class TestExecuteTransient(InsightsIntegrationTestCase):
     """Behavioural tests for the choke point.
 

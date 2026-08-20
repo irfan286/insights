@@ -200,3 +200,33 @@ def build_saved(name: str):
             return doc.build()
         except Exception as exc:
             raise as_tool_error(exc, captured=captured) from exc
+
+
+def columns_for_saved_query(name: str) -> list[dict]:
+    """The output columns of a PERSISTED query, as `SymbolTable.from_json` wants them.
+
+    Note the key rename. `get_columns_from_schema` emits `{"name", "type"}`
+    (`ibis_utils.py:1027-1034`) while `SymbolTable.from_json` reads `data_type`
+    (`compiler.py:163-171`) -- feed it the raw rows and every column silently becomes a
+    String, which then makes every granularity and aggregation decision wrong without
+    raising anything.
+
+    Lives here rather than in a tool because it reads a document and must fire the read
+    permission hook, which is the same reason `execute_saved` lives here.
+    """
+    doc = frappe.get_doc(DOCTYPE, name)
+    doc.check_permission("read")
+
+    if not frappe.parse_json(doc.operations or "[]"):
+        raise ToolError(
+            f"Query '{name}' has no operations, so it has no output columns yet.",
+            fix="Save a query with a spec first, or render the chart it belongs to.",
+        )
+
+    with capture_build_diagnostics() as captured:
+        try:
+            columns = doc.get_columns_for_selection()
+        except Exception as exc:
+            raise as_tool_error(exc, captured=captured) from exc
+
+    return [{"name": c["name"], "data_type": c["type"]} for c in columns]

@@ -298,6 +298,62 @@ def _dimension_data_type(source_type: str | None) -> str:
     return source_type or "String"
 
 
+
+def filter_rule(rule: dict, symbols: SymbolTable, path: str) -> dict:
+    """One filter, resolved against `symbols`.
+
+    Module level, not a method, because `chartspec.py` needs the identical operator
+    semantics for a chart's own filters. A second copy would drift on exactly the cases
+    that are already subtle -- the valueless operators, `between`'s pair, `within`'s
+    timespan string.
+    """
+    name = rule.get("column")
+    col = symbols.require(name, spec_path=f"{path}.column")
+
+    operator = _reject_enum(
+        rule.get("op"), FILTER_OPERATORS, spec_path=f"{path}.op", label="filter operator"
+    )
+    value = rule.get("value")
+
+    if operator in VALUELESS_OPERATORS:
+        # The backend still reads `value` (ibis_utils.py:381) and, if it is a dict
+        # with column_name, resolves it as a column -- which can throw for an
+        # operator that does not use it. Always emit null.
+        value = None
+    elif operator in LIST_OPERATORS:
+        if not isinstance(value, list):
+            raise ToolError(
+                f"Operator '{operator}' needs a list of values.",
+                spec_path=f"{path}.value",
+            )
+    elif operator == "between":
+        if not isinstance(value, list) or len(value) != 2:
+            raise ToolError(
+                "Operator 'between' needs exactly two values: [start, end].",
+                spec_path=f"{path}.value",
+            )
+    elif operator == "within":
+        if not isinstance(value, (str, list)):
+            raise ToolError(
+                "Operator 'within' needs a timespan string such as 'Last 7 days'.",
+                spec_path=f"{path}.value",
+            )
+    elif value is None:
+        raise ToolError(
+            f"Operator '{operator}' needs a value.",
+            spec_path=f"{path}.value",
+            fix=f"Use one of {', '.join(VALUELESS_OPERATORS)} to test for emptiness.",
+        )
+    elif operator in ("contains", "not_contains") and not isinstance(value, str):
+        # apply_filter does value.replace("%", "") -> AttributeError on a number.
+        raise ToolError(
+            f"Operator '{operator}' needs a string value.", spec_path=f"{path}.value"
+        )
+
+    # The operation key is `operator`; the spec key is `op`. Not a typo.
+    return {"column": _column_ref(col.name), "operator": operator, "value": value}
+
+
 # --------------------------------------------------------------------------- #
 # the compiler
 # --------------------------------------------------------------------------- #
@@ -538,50 +594,7 @@ class _Compiler:
             self.emit(op, spec_path=path, kind="filter_group", columns=self.symbols.columns)
 
     def _filter_rule(self, rule: dict, path: str) -> dict:
-        name = rule.get("column")
-        col = self.symbols.require(name, spec_path=f"{path}.column")
-        operator = _reject_enum(
-            rule.get("op"), FILTER_OPERATORS, spec_path=f"{path}.op", label="filter operator"
-        )
-        value = rule.get("value")
-
-        if operator in VALUELESS_OPERATORS:
-            # The backend still reads `value` (ibis_utils.py:381) and, if it is a dict
-            # with column_name, resolves it as a column -- which can throw for an
-            # operator that does not use it. Always emit null.
-            value = None
-        elif operator in LIST_OPERATORS:
-            if not isinstance(value, list):
-                raise ToolError(
-                    f"Operator '{operator}' needs a list of values.",
-                    spec_path=f"{path}.value",
-                )
-        elif operator == "between":
-            if not isinstance(value, list) or len(value) != 2:
-                raise ToolError(
-                    "Operator 'between' needs exactly two values: [start, end].",
-                    spec_path=f"{path}.value",
-                )
-        elif operator == "within":
-            if not isinstance(value, (str, list)):
-                raise ToolError(
-                    "Operator 'within' needs a timespan string such as 'Last 7 days'.",
-                    spec_path=f"{path}.value",
-                )
-        elif value is None:
-            raise ToolError(
-                f"Operator '{operator}' needs a value.",
-                spec_path=f"{path}.value",
-                fix=f"Use one of {', '.join(VALUELESS_OPERATORS)} to test for emptiness.",
-            )
-        elif operator in ("contains", "not_contains") and not isinstance(value, str):
-            # apply_filter does value.replace("%", "") -> AttributeError on a number.
-            raise ToolError(
-                f"Operator '{operator}' needs a string value.", spec_path=f"{path}.value"
-            )
-
-        # The operation key is `operator`; the spec key is `op`. Not a typo.
-        return {"column": _column_ref(col.name), "operator": operator, "value": value}
+        return filter_rule(rule, self.symbols, path)
 
     # -- 5. derive --------------------------------------------------------- #
 
@@ -906,3 +919,210 @@ class _Compiler:
             op = {"type": "select", "column_names": names}
             self.emit(op, spec_path="joins", kind="select",
                       columns=[c for c in self.symbols.columns if not c.volatile])
+
+
+# --------------------------------------------------------------------------- #
+# operations -> QuerySpec  (the inverse, best effort and honest about it)
+# --------------------------------------------------------------------------- #
+
+DECOMPILABLE_TYPES = (
+    "source", "join", "cast", "filter_group", "mutate", "rename",
+    "summarize", "pivot_wider", "order_by", "limit", "select",
+)
+
+# Canonical emission order, from §6.3. A query whose operations do not follow it may still
+# be perfectly valid -- it is just not something QuerySpec can express, because the DSL
+# encodes the order in its field names.
+_RANK = {
+    "source": 0, "join": 1, "cast": 2, "filter_group": 3, "mutate": 4, "rename": 5,
+    "summarize": 6, "pivot_wider": 6, "order_by": 8, "limit": 9, "select": 10,
+}
+
+
+def decompile(operations) -> tuple[dict | None, str | None]:
+    """`operations[]` -> `(QuerySpec, None)` or `(None, reason)`.
+
+    Deliberately eager to give up. A lossy spec is worse than no spec here: the model
+    edits what it is handed and submits it back, so an approximation becomes a wrong
+    query rather than a wrong reading. The raw operations are returned alongside either
+    way, so `None` costs the caller nothing.
+    """
+    ops = frappe.parse_json(operations) if isinstance(operations, str) else (operations or [])
+    if not ops:
+        return None, "the query has no operations"
+
+    for op in ops:
+        kind = op.get("type")
+        if kind not in DECOMPILABLE_TYPES:
+            return None, f"contains a {kind} operation -- not expressible in QuerySpec"
+
+    if ops[0]["type"] != "source":
+        return None, "does not begin with a source"
+
+    aggregations = [op for op in ops if op["type"] in ("summarize", "pivot_wider")]
+    if len(aggregations) > 1:
+        return None, "contains two aggregation steps"
+
+    spec = {}
+    aggregated = False
+    rank = -1
+
+    for op in ops:
+        kind = op["type"]
+        current = _RANK[kind] + (4 if kind == "filter_group" and aggregated else 0)
+        if current < rank:
+            return None, "the operations are not in an order QuerySpec can express"
+        rank = current
+
+        if kind == "source":
+            table = op.get("table") or {}
+            if table.get("type") == "query":
+                spec["from"] = {"query": table.get("query_name")}
+            else:
+                spec["from"] = {
+                    "data_source": table.get("data_source"),
+                    "table": table.get("table_name"),
+                }
+
+        elif kind == "join":
+            table = op.get("table") or {}
+            condition = op.get("join_condition") or {}
+            spec.setdefault("joins", []).append({
+                "table": table.get("table_name"),
+                "data_source": table.get("data_source"),
+                "how": op.get("join_type", "left"),
+                "left_on": (condition.get("left_column") or {}).get("column_name"),
+                "right_on": (condition.get("right_column") or {}).get("column_name"),
+                "select": [c["column_name"] for c in op.get("select_columns") or []],
+            })
+
+        elif kind == "cast":
+            spec.setdefault("cast", []).append({
+                "column": (op.get("column") or {}).get("column_name"),
+                "data_type": op.get("data_type"),
+            })
+
+        elif kind == "filter_group":
+            rules, reason = _decompile_filters(op)
+            if reason:
+                return None, reason
+            if aggregated:
+                spec["having"] = rules
+            elif op.get("logical_operator") == "Or":
+                spec["where_any"] = rules
+            else:
+                spec["where"] = rules
+
+        elif kind == "mutate":
+            spec.setdefault("derive", []).append({
+                "name": op.get("new_name"),
+                "expression": (op.get("expression") or {}).get("expression"),
+                "data_type": op.get("data_type", "Auto"),
+            })
+
+        elif kind == "rename":
+            spec.setdefault("rename", []).append({
+                "column": (op.get("column") or {}).get("column_name"),
+                "as": op.get("new_name"),
+            })
+
+        elif kind in ("summarize", "pivot_wider"):
+            aggregated = True
+            dimensions = op["dimensions"] if kind == "summarize" else op.get("rows") or []
+            measures = op["measures"] if kind == "summarize" else op.get("values") or []
+            spec["group_by"] = [_group_by_ref(d) for d in dimensions]
+            spec["aggregate"] = [_aggregate_ref(m) for m in measures]
+            if any(a is None for a in spec["aggregate"]):
+                return None, "contains an expression measure -- QuerySpec has no expression form"
+            if kind == "pivot_wider":
+                columns = op.get("columns") or []
+                if len(columns) != 1:
+                    return None, "pivots on more than one column"
+                # `_pivot` lifts the pivot column OUT of the dimensions to form `columns`,
+                # so it has to go back into `group_by` or the recompiled spec pivots on a
+                # column it never grouped by. It lands last; the original position is not
+                # recoverable and does not affect the compiled output.
+                spec["group_by"] += [_group_by_ref(c) for c in columns]
+                spec["pivot_on"] = {
+                    "column": columns[0].get("dimension_name") or columns[0].get("column_name"),
+                    "max_values": op.get("max_column_values", 10),
+                }
+
+        elif kind == "order_by":
+            spec.setdefault("sort", []).append({
+                "column": (op.get("column") or {}).get("column_name"),
+                "desc": op.get("direction") == "desc",
+            })
+
+        elif kind == "limit":
+            spec["limit"] = op.get("limit")
+
+        elif kind == "select":
+            spec["select"] = op.get("column_names") or []
+
+    _drop_auto_casts(spec)
+    return spec, None
+
+
+def _decompile_filters(op: dict) -> tuple[list | None, str | None]:
+    rules = []
+    for rule in op.get("filters") or []:
+        if rule.get("type") == "filter_group":
+            return None, "contains a nested filter group -- use raw_operations"
+        if "expression" in rule:
+            return None, "contains an expression filter -- use raw_operations"
+        column = (rule.get("column") or {}).get("column_name")
+        if not column:
+            return None, "contains a column-to-column filter -- use raw_operations"
+        out = {"column": column, "op": rule.get("operator")}
+        if rule.get("value") is not None:
+            out["value"] = rule["value"]
+        rules.append(out)
+    return rules, None
+
+
+def _group_by_ref(dimension: dict) -> dict:
+    ref = {"column": dimension.get("column_name")}
+    if dimension.get("granularity"):
+        ref["granularity"] = dimension["granularity"]
+    if dimension.get("dimension_name") and dimension["dimension_name"] != dimension.get("column_name"):
+        ref["as"] = dimension["dimension_name"]
+    return ref
+
+
+def _aggregate_ref(measure: dict) -> dict | None:
+    if "expression" in measure:
+        return None
+
+    fn = measure.get("aggregation")
+    if measure.get("column_name") == "count" and fn == "count":
+        ref = {"fn": "count"}
+        if measure.get("measure_name") != "count_of_rows":
+            ref["as"] = measure["measure_name"]
+        return ref
+
+    ref = {"column": measure.get("column_name"), "fn": fn}
+    if measure.get("measure_name") != f"{fn}_of_{measure.get('column_name')}":
+        ref["as"] = measure.get("measure_name")
+    return ref
+
+
+def _drop_auto_casts(spec: dict) -> None:
+    """Remove the casts the compiler would re-emit itself.
+
+    `_auto_cast` emits `{cast -> Datetime}` for a String column that a `group_by` gives a
+    granularity to (§6.3 branch 1). Echoing it back into `spec.cast` would make the next
+    compile emit it twice.
+    """
+    if not spec.get("cast"):
+        return
+
+    granular = {
+        g["column"] for g in spec.get("group_by") or [] if g.get("granularity")
+    }
+    spec["cast"] = [
+        c for c in spec["cast"]
+        if not (c["data_type"] == "Datetime" and c["column"] in granular)
+    ]
+    if not spec["cast"]:
+        del spec["cast"]

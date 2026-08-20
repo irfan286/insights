@@ -258,5 +258,58 @@ class TestMcpTransport(InsightsIntegrationTestCase):
         tools = self.body(response)["result"]["tools"]
         self.assertTrue(tools, "no tools registered")
         for tool in tools:
-            self.assertIn("inputSchema", tool)
-            self.assertEqual(tool["inputSchema"].get("type"), "object")
+            with self.subTest(tool=tool["name"]):
+                self.assertIn("inputSchema", tool)
+                self.assertEqual(tool["inputSchema"].get("type"), "object")
+                # `frappe-mcp check` cannot run against this architecture (§8 J), so this
+                # is the replacement for the lint it would have given us: an empty
+                # `properties` means somebody fell back to type-hint inference, which
+                # cannot express an enum, a default or a nested object.
+                self.assertIn("properties", tool["inputSchema"])
+                self.assertTrue(tool["description"], "a tool with no description")
+                self.assertTrue(tool.get("annotations"), "a tool with no annotations")
+
+    def test_the_phase_2_tools_are_on_the_wire(self):
+        response = self.call(body={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        names = {t["name"] for t in self.body(response)["result"]["tools"]}
+        self.assertLessEqual(
+            {
+                "save_query", "list_workbooks", "get_item", "delete_item",
+                "create_chart", "update_chart", "create_dashboard", "update_dashboard",
+            },
+            names,
+        )
+
+    def test_write_tools_are_not_marked_read_only(self):
+        response = self.call(body={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        tools = {t["name"]: t for t in self.body(response)["result"]["tools"]}
+        for name in ("save_query", "create_chart", "create_dashboard", "delete_item"):
+            with self.subTest(tool=name):
+                self.assertFalse(tools[name]["annotations"].get("readOnlyHint"))
+        self.assertTrue(tools["delete_item"]["annotations"].get("destructiveHint"))
+
+    def test_prompts_list_serves_the_explore_prompt(self):
+        """Upstream prompt support is the newest code in the package (OQ #20), so this
+        asserts it over the wire rather than trusting the decorator ran."""
+        response = self.call(body={"jsonrpc": "2.0", "id": 3, "method": "prompts/list"})
+        self.assertEqual(response.status_code, 200)
+        prompts = {p["name"]: p for p in self.body(response)["result"]["prompts"]}
+        self.assertIn("explore", prompts)
+        arguments = prompts["explore"]["arguments"]
+        self.assertEqual(arguments[0]["name"], "data_source")
+        # Inferred metadata carries no description (`prompts/__init__.py:52-59`), so a
+        # missing one here means the explicit `arguments=` was dropped.
+        self.assertTrue(arguments[0].get("description"))
+
+    def test_prompts_get_returns_a_grounding_message(self):
+        response = self.call(
+            body={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "prompts/get",
+                "params": {"name": "explore", "arguments": {"data_source": "datalake"}},
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        text = self.body(response)["result"]["messages"][0]["content"]["text"]
+        self.assertIn("get_docs('datalake')", text)
