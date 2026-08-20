@@ -15,44 +15,54 @@ this file tells you to load for the phase you are on.
 
 ## 1. Current status
 
-**Phase: 1 — feature-complete. All deliverables built and tested; demo gate passes over HTTP.**
+**Phase: 2 — feature-complete. All deliverables built and tested; demo gate passes over HTTP
+against `datalake`, and the charts were confirmed rendering in the browser.**
 
-Last updated: 2026-08-19 · Updated by: Phase 1 session 1
+Last updated: 2026-08-19 · Updated by: Phase 2 session 1
 
 | Phase | State | Gate to enter |
 |---|---|---|
 | 0 — Blocking unknowns | ✅ complete | none |
 | 1 — Walking skeleton | ✅ complete (see caveats) | Phase 0 complete |
-| 2 — Charts & dashboards | ⬜ not started | Phase 1 demo passes |
+| 2 — Charts & dashboards | ✅ complete (see caveats) | Phase 1 demo passes |
 | 3 — Shareable links | ⬜ not started | Phase 2 demo passes |
 
-**What exists.** `insights/mcp/`: `__init__.py` (transport), `origin.py`, `validate.py`,
+**What Phase 1 left.** `insights/mcp/`: `__init__.py` (transport), `origin.py`, `validate.py`,
 `errors.py`, `guards.py`, `schemas.py`, `compiler.py`, `render.py`, `docs.py`, and
-`tools/{discovery,query,docs}.py` — **7 tools**: `list_data_sources`, `list_tables`,
-`describe_table`, `distinct_values`, `get_docs`, `write_ai_note`, `run_query`.
-Plus the `Insights Data Doc` doctype with its zone guard, `insights/api/docs.py`
-(`promote_note`, human-only), the `flag_stale_docs` daily hook, and
-`mcp_allowed_origins` on `Insights Settings`.
+`tools/{discovery,query,docs}.py` — **7 tools**, the `Insights Data Doc` doctype with its zone
+guard, `insights/api/docs.py`, the `flag_stale_docs` daily hook, and `mcp_allowed_origins`.
 
-**104 MCP tests passing** across `test_transport` (16), `test_guards` (16),
-`test_compiler` (39), `test_compiler_integration` (6), `test_schemas` (6),
-`test_docs` (21). Existing suites unaffected: `test_permissions`, `test_ibis_utils`,
-`test_warehouse`, `test_basic_workflow` all green.
+**What Phase 2 added — 15 tools.** New: `save_query`, `list_workbooks`, `get_item`,
+`delete_item`, `create_chart`, `update_chart`, `create_dashboard`, `update_dashboard`.
+New modules: `insights/insights/doctype/insights_chart_v3/chart_operations.py` (the port of
+`chart.ts`), `insights/mcp/chartspec.py`, `insights/mcp/layout.py`, `insights/mcp/prompts.py`
+(the `/explore` prompt), `tools/{workbook,chart,dashboard}.py`. Modified:
+`insights_chart_v3.py` gains `sync_data_query()` + `refresh_data_query(force=False)`;
+`compiler.py` gains `decompile(operations)` and a module-level `filter_rule()`.
 
-**Demo gate: PASSES.** Verified end to end over HTTP with a real API key —
-`get_docs` → `describe_table` → `distinct_values` → `run_query(dry_run)` → `run_query`,
-returning real rows. Honest framing: no documents are created, but execution log rows
-are, and each is greppable by its `mcp-` name prefix.
+**234 MCP tests passing** across `test_transport` (20), `test_guards` (25),
+`test_compiler` (50), `test_compiler_integration` (6), `test_schemas` (6), `test_docs` (26),
+`test_chart_operations` (42), `test_chart_render` (8), `test_chartspec_roundtrip` (38),
+`test_chart_ts_drift` (1), `test_tools_phase2` (12). Existing suites unaffected:
+`test_permissions` (8), `test_ibis_utils` (5), `test_warehouse` (3),
+`workbook/test_workbook` (6), `workbook/test_querying` (9) all green.
 
-**Two caveats, neither in our code:**
-1. **DuckDB segfaults the web worker** — see §8 Q. Use `Site DB` or `datalake` over
-   HTTP; `demo_data` is fine for the in-process test suite.
-2. When that segfault happens the **whole `bench start` group goes down**, Redis
-   included — so an empty MCP response means restart the bench, not debug Redis.
+**Demo gate: PASSES.** *"Build a sales dashboard"* run end to end over HTTP against
+`datalake` — `list_tables` → `describe_table` (documentation served) → `run_query(dry_run)` →
+`run_query` → `save_query` → `create_chart` → `create_dashboard` → `update_dashboard` (a
+`Store` filter driving both charts) → `get_item`. Then **opened in the browser and both
+charts drew** with real axes and data (workbook `122` on the dev site, left in place as
+evidence). That last step is the only thing that proves the port worked; a passing suite
+cannot tell you a config renders.
 
-**Owed:** the upstream PR against `frappe/mcp` issue #5 (fork is pushed and pinned),
-the claude.ai Connectors protocol-version test (needs a tunnel + `host_name`, §8 E/H),
-and a first real documentation upload for `datalake` (§8 A).
+**Caveats, none of them in Phase 2 code:**
+1. **DuckDB segfaults the web worker** — see §8 Q. Use `Site DB` or `datalake` over HTTP.
+2. When that happens the **whole `bench start` group goes down**, Redis included.
+3. **No render timeout exists, deliberately** — see §8 U. `create_chart` refuses to render a
+   pivot by default and measures the rest instead.
+
+**Owed:** the upstream PR against `frappe/mcp` issue #5 (fork is pushed and pinned), and the
+claude.ai Connectors protocol-version test (needs a tunnel + `host_name`, §8 E/H).
 
 ---
 
@@ -168,7 +178,12 @@ updating this section.
 | `mcp.errors.ToolError(message, spec_path=, valid_columns=)` | P1 | P2, P3 | Raised, never returned. Carries the fields the model needs to self-correct. |
 | `mcp.validate.tool_args(schema)` | P1 | P2, P3 | Upstream never validates `tools/call` arguments (`run_tool` is dead code). Every tool wears this. |
 | `mcp.docs.compose(data_source, table=None)` | P1 | P2 | Returns provenance-headed blocks. `describe_table` calls it — that piggy-back is the documentation delivery mechanism. |
-| `chart_operations.build_data_query_operations(chart)` | P2 | P3 | **Must set `use_live_connection` from the source query**, not just write operations. Omitting it renders charts blank with no error. |
+| `chart_operations.build_data_query_operations(chart)` | P2 | P3 | Pure: no DB, no execute. A guard test enforces that. |
+| `InsightsChartv3.sync_data_query()` | P2 | P3 | Writes operations **and** `use_live_connection` from the source query; returns `{operations, use_live_connection, page_size}`. Omitting the propagation renders charts blank with no error. The MCP layer calls this, never `refresh_data_query`. |
+| `chartspec.resolve(spec, symbols) -> (chart_type, config, notes)` | P2 | P3 | Resolves against a `SymbolTable`, never a saved doc. `notes` are advisory strings for the tool response. |
+| `chartspec.decompile(chart_type, config)` / `compiler.decompile(operations)` | P2 | P3 | `(spec, None)` or `(None, reason)`. Never a lossy approximation. |
+| `layout.reflow(items, chart_types=)` | P2 | P3 | 20-column grid; filters take the top row. Preserves an existing `layout.i`, which is what `remove_item_ids` addresses. |
+| `dashboard.encode_filter_link` / `decode_filter_link` | P2 | P3 | The `` `query`.`column` `` encoding lives here in both directions and is never shown to the model. |
 
 ---
 
@@ -219,16 +234,33 @@ Honest framing: no documents are created, but execution logs **are** written and
 
 ### Phase 2 — charts & dashboards (≈3 weeks)
 
-- [ ] `chart_operations.py` — port of `chart.ts:66-92, 220-380` ← **the long pole**
-- [ ] `use_live_connection` propagation (omitting it is the blank-chart bug)
-- [ ] `insights/mcp/chartspec.py` — `ChartSpec` → config, post-`transformChartDoc` shape
-- [ ] `insights_chart_v3.py` — add `refresh_data_query(force=False)`
-- [ ] Tools: `save_query`, `list_workbooks`, `get_item`, `create_chart`, `update_chart`, `create_dashboard`, `update_dashboard`, `delete_item`
-- [ ] `test_chart_operations.py` — golden tests over all 10 chart types asserting operations **and** `use_live_connection`
-- [ ] `test_chartspec_roundtrip.py` — MCP-written config → `transformChartDoc` → no diff
-- [ ] *(optional)* heading-based doc auto-slicing at upload; MCP prompts (§5.7)
+- [x] `chart_operations.py` — port of `chart.ts:66-92, 220-380` ← **the long pole.** Plus
+      `normalize_config` (`transformChartDoc`) and `validate_config` (`validateConfig`)
+- [x] `use_live_connection` propagation — asserted in **both** directions, doc-level
+- [x] `insights/mcp/chartspec.py` — `ChartSpec` → config, post-`transformChartDoc` shape,
+      **and** `decompile` back again
+- [x] `insights_chart_v3.py` — `sync_data_query()` **and** `refresh_data_query(force=False)`
+      (split so the MCP layer never executes outside `guards.py` — §8 T.2)
+- [x] Tools: `save_query`, `list_workbooks`, `get_item`, `create_chart`, `update_chart`,
+      `create_dashboard`, `update_dashboard`, `delete_item`
+- [x] `test_chart_operations.py` — **42 tests**, golden operations over all 10 chart types,
+      all three Table branches, the order-by dedup, and "no chart ever emits a `limit`"
+- [x] `test_chart_render.py` — **8 tests**, the doc-state half: `use_live_connection` in both
+      directions, and one real execution returning rows
+- [x] `test_chartspec_roundtrip.py` — **38 tests**: fixed point under `normalize_config`, a
+      second independent transcription of the TS normalization rules, spec→config→spec,
+      every measure carries a real aggregation, camelCase containment
+- [x] `test_chart_ts_drift.py` — fingerprints the 16 TypeScript functions the port copies
+- [x] `test_tools_phase2.py` — **12 tests**, the whole tool sequence against `Site DB`
+- [x] MCP prompt `/explore` (§5.7) — verified over the wire, `prompts/list` + `prompts/get`
+- [ ] *(dropped by decision)* heading-based doc auto-slicing at upload — the `datalake`
+      corpus is already imported (§8 R), so it has little left to do
+- [ ] *(moved to Phase 3 by decision)* `share_dashboard` — design §10 put it here, this
+      checklist put it in Phase 3, and Irfan chose Phase 3 so it lands with the token model
 
-**Demo gate:** *"Build a sales dashboard from the site DB and give me a link."*
+**Demo gate: ✅ PASSED 2026-08-19.** *"Build a sales dashboard from `datalake` and give me a
+link."* → the incremental tool sequence → a two-chart dashboard with a shared `Store` filter,
+**confirmed rendering in the browser**. The returned URL is honest that it 404s until Phase 3.
 
 ### Phase 3 — shareable links (≈2 weeks)
 
@@ -801,6 +833,119 @@ fire. Regression tests are now in `TestCompositionBudget`.
 
 The lesson worth carrying into Phase 2: **the tier caps need a realistic corpus to
 test against.** Every one of these paths passed its unit tests.
+
+### T. Phase 2 decisions worth not re-litigating
+
+1. **`chart_operations.py` is a pure port and must stay one.** No `frappe.db`, no `get_doc`,
+   no `.execute(` — asserted by `test_guards.py::test_chart_operations_is_a_pure_port`. That
+   is what keeps its 42 golden tests a 5ms `UnitTestCase` with no fixtures, and it is what
+   lets Phase 3 point `chart.ts:refresh()` at the same code.
+
+2. **`sync_data_query()` and `refresh_data_query()` are deliberately separate.**
+   `sync_data_query` writes operations + `use_live_connection` and stops;
+   `refresh_data_query` is sync-then-execute and is the UI's (and Phase 3's) entry point.
+   The MCP layer calls **only** `sync_data_query`, then renders through
+   `guards.execute_saved` — so `insights/mcp/` still contains `.execute(` in exactly one
+   file. `chart_operations.py` sits outside `insights/mcp/`, so the AST rule would not have
+   bound it; keeping the letter of rule 3 while losing its point is the failure this avoids.
+   `test_mcp_never_calls_refresh_data_query` makes the arrangement load-bearing.
+
+3. **No `limit` operation is ever emitted for a chart.** The chart's limit is `page_size` at
+   execute time (`chart.ts:82, 91`). Adding one would change semantics — a limit before a
+   summarize is not a limit after it — and break the golden diff against a UI-written doc.
+
+4. **Sankey emits no chart operation.** `addChartOperation` has no Sankey branch, and its
+   renderer aggregates client-side. Pinned by a test so nobody "fixes" the omission.
+
+5. **`fn: "none"` compiles to `aggregation: "sum"`, not to an empty one.** `apply_aggregate`
+   is an if-chain that `frappe.throw`s on anything outside the six functions
+   (`ibis_utils.py:841-855`) — measured, not assumed. It mirrors `MeasurePicker.vue:100-123`:
+   keep the column's own name, fill the function with `sum`. The tool response says plainly
+   that this is the identity only when the bound query is already one row per group.
+
+6. **`normalize_config` reproduces `transformChartDoc`'s asymmetry on purpose.**
+   `setDimensionNames` visits `x_axis.dimension`, `split_by.dimension`, `date_column`,
+   `label_column`, `rows[]`, `columns[]` and **not** `location_column`, Bubble's
+   `dimension`/`quadrant_column`, or the Sankey columns. Do not "improve" it: a config we
+   normalize differently from the UI stops round-tripping, and the first human to open the
+   chart silently rewrites it.
+
+7. **`decompile` is eager to give up.** The model edits what it is handed and submits it
+   back, so a lossy spec becomes a wrong query rather than a wrong reading. `union`,
+   `custom_operation`, `remove`, nested filter groups, expression measures, two aggregation
+   steps and out-of-canonical-order operations all return `(None, reason)` — with the raw
+   operations or config returned alongside either way, so `None` costs the caller nothing.
+
+8. **`filter_rule` was lifted out of `_Compiler` to module level** so `chartspec` can reuse
+   the identical operator semantics. A second copy would drift on exactly the subtle cases:
+   the valueless operators, `between`'s pair, `within`'s timespan string.
+
+9. **The layout generator preserves an existing `layout.i`.** It is what `remove_item_ids`
+   addresses, so regenerating it under the caller silently breaks their next call.
+
+### U. Phase 2 measurements and one thing that does not exist
+
+**There is no render timeout, and that is a decision.** Design §7.3 asks for a 30s cap on
+`create_chart`. `signal.alarm` cannot deliver it here:
+
+* `signal.signal` only works on the main thread, and `bench serve` runs
+  `run_simple(..., threaded=not no_threading)` with the default (`frappe/app.py:520-528`), so
+  every request handler is off the main thread. Under gunicorn it depends on the worker class.
+* Frappe ships no timeout helper (grepped).
+* The failure profile would be the worst available: **green in the in-process test suite**
+  (which does run on the main thread) and `ValueError` on the dev server.
+* The expensive step — `apply_pivot`'s eager mid-build `.execute()` (`ibis_utils.py:572`) —
+  blocks inside a C extension, where a Python signal handler cannot run until it returns.
+
+What was built instead: `create_chart(render="auto")` **refuses to render a pivot chart**
+(a `split_by` axis chart, or a Table with `columns`) and says why, with `render: "force"` and
+`update_chart(rerender_only: true)` as the handles. Non-pivot renders are measured, and a
+render over 30s comes back with a "this chart will be slow to open" warning carrying the real
+number. The honest hard control is a per-connection statement timeout at the data-source
+layer (`SET statement_timeout` / `MAX_EXECUTION_TIME`); it is backend-specific, unavailable
+for DuckDB, and out of Phase 2. **Do not rediscover `signal.alarm`.**
+
+**Three more things measured rather than reasoned about:**
+
+1. **`@transactional` rolls back the whole request, not just the tool's writes.** A
+   `ToolError` raised by `delete_item` in the middle of a test discarded everything the test
+   had set up before it. In production that is exactly right — one `tools/call` is one HTTP
+   request — but it means an integration test cannot assert a mid-sequence failure and then
+   keep going. `test_tools_phase2` splits those assertions into their own tests, and says so.
+
+2. **A chart that is on a dashboard cannot be deleted.** `frappe.delete_doc` raises
+   `LinkExistsError` via the dashboard's `linked_charts` child table, with an HTML message
+   full of desk URLs. `delete_item` catches it and returns a `ToolError` naming
+   `update_dashboard(remove_item_ids=[...])` as the fix.
+
+3. **A numeric column used as a dimension renders as a second series.** Seen on the live
+   demo dashboard: grouping by `month` (a `double precision` column) drew a flat blue line
+   next to the real one. The UI never offers a numeric column as a dimension
+   (`FIELDTYPES.DIMENSION`, `constants.ts:11-20`), so the renderer was not designed around
+   it. Grouping by a numeric year or month is a real thing to want, so `chartspec` **warns
+   rather than refuses**, and points at casting the column in the bound query.
+
+**Chart renders are NOT greppable by the `mcp-` prefix.** `guards._transient_doc` names its
+throwaway docs `mcp-<hash>` (§8 L), but a chart render goes through `execute_saved` on a real
+named data_query, so its `Insights Query Execution Log` row carries that doc's own hash. Do
+not assume the prefix covers every MCP-originated execution.
+
+**Upstream prompt support works** (open question #20, partially answered). `prompts/list` and
+`prompts/get` both round-trip over HTTP against the real endpoint, and the explicit
+`arguments=[PromptArgument(...)]` survives — note `PromptArgument` is **not** re-exported at
+`frappe_mcp`'s top level; import it from `frappe_mcp.server.prompts`.
+
+**The TypeScript drift tripwire.** `test_chart_ts_drift.py` fingerprints the 16 functions the
+port copies, brace-matched out of `chart.ts` / `charts/helpers.ts` with comments and
+whitespace normalised away. When it fails, the TypeScript changed: read the diff, decide
+whether the Python needs the same change, then update the hash. It is a fingerprint, not a
+parity proof — but it is the only thing in the suite that notices the TS moving, and design
+§11 lists that drift as an accepted risk with no other mitigation. Phase 3 retires it by
+pointing `chart.ts:refresh()` at `refresh_data_query`.
+
+**Demo artifacts left in place.** Workbook `122` on the `development` site ("MCP Phase 2
+Demo") holds the two queries, two charts and the dashboard from the demo gate, plus the
+screenshot proving they render. Delete it when it stops being useful as evidence.
 
 ### I. Housekeeping
 
