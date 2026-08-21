@@ -47,6 +47,10 @@ WRITE_NODES = (
     "Grant", "Revoke", "Command", "Copy", "Merge",
 )
 
+# Node names that ARE the SQL keyword, so quoting them back is useful. Anything outside
+# this set gets described rather than named -- see assert_read_only.
+_KEYWORD_NODES = frozenset(WRITE_NODES) - {"Command", "TruncateTable"} | {"Truncate"}
+
 SETTING = "mcp_allow_sql_writes"
 
 
@@ -98,13 +102,22 @@ def assert_read_only(raw_sql: str, *, dialect: str | None = None) -> None:
     kind = type(stmt).__name__
 
     if kind not in ALLOWED_STATEMENTS:
+        # Name the SQL keyword when the parse maps cleanly onto one. It often does not:
+        # `EXEC sp_who` parses as exp.Alias, and telling a model its statement "is a
+        # ALIAS" is noise it cannot act on. Say what was expected instead.
+        described = (
+            f"this is a {kind.upper()} statement"
+            if kind in _KEYWORD_NODES
+            else f"it does not parse as a read-only query (parsed as: {kind})"
+        )
         raise ToolError(
-            f"Only read-only SQL is accepted; this is a {kind.upper()} statement.",
+            f"Only read-only SQL is accepted; {described}.",
             spec_path="sql",
             fix=(
-                "Send a SELECT. To change data, do it in the database directly — an "
-                "administrator can enable Insights Settings > Allow MCP SQL Writes, "
-                "but that removes this protection for every MCP caller."
+                "Send a single SELECT. To change data, do it against the database "
+                "directly — an administrator can enable Insights Settings > Allow MCP "
+                "SQL Writes, but that removes this protection for every MCP caller, "
+                "not just this query."
             ),
         )
 
