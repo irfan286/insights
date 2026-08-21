@@ -280,6 +280,42 @@ DISTINCT_VALUES = {
     "required": ["column_name"],
 }
 
+SQL_TEXT = {
+    "type": "string",
+    "description": (
+        "ONE read-only SQL statement in the data source's own dialect. Multiple "
+        "statements are refused. Unless an administrator has enabled Insights Settings "
+        "> Allow MCP SQL Writes, anything that writes is refused before it reaches the "
+        "database -- including SELECT ... INTO and a DELETE hidden inside a CTE."
+    ),
+}
+
+RUN_SQL = {
+    "type": "object",
+    "properties": {
+        "data_source": {"type": "string", "description": "name of the Insights Data Source v3"},
+        "sql": SQL_TEXT,
+        "dry_run": {
+            "type": "boolean",
+            "default": False,
+            "description": "return output columns without rows. NOT free - it still executes a build.",
+        },
+        "workbook": {"type": "string"},
+        "use_live_connection": {
+            "type": "boolean",
+            "default": True,
+            "description": (
+                "true queries the source database directly. false routes through the "
+                "warehouse, where an un-synced table silently resolves to an EMPTY one."
+            ),
+        },
+        "page": {"type": "integer", "default": 1, "minimum": 1},
+        "page_size": {"type": "integer", "default": 20, "maximum": 10000, "minimum": 1},
+        "force": {"type": "boolean", "default": False, "description": "bypass the 10-minute result cache"},
+    },
+    "required": ["data_source", "sql"],
+}
+
 RUN_QUERY = {
     "type": "object",
     "properties": {
@@ -477,6 +513,11 @@ SAVE_QUERY = {
             "type": "array",
             "items": {"type": "object"},
             "description": "ADVANCED: raw v3 operations[]. Prefer spec.",
+        },
+        "sql": SQL_TEXT,
+        "data_source": {
+            "type": "string",
+            "description": "required with `sql`; ignored otherwise (spec carries its own source)",
         },
         "workbook": {
             "type": "string",

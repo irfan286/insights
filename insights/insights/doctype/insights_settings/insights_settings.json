@@ -14,6 +14,7 @@
   "apply_user_permissions",
   "allowed_origins",
   "mcp_allowed_origins",
+  "mcp_allow_sql_writes",
   "max_records_to_sync",
   "max_memory_usage",
   "max_execution_time",
@@ -122,6 +123,13 @@
    "fieldtype": "Small Text",
    "label": "MCP Allowed Origins",
    "description": "Origins permitted to drive the MCP endpoint (insights.mcp.handle_mcp), one per line. This is NOT the iframe-embedding allowlist — see Allowed Origins above. An origin listed here can execute queries against every data source this site can reach. Leave empty unless a browser-based MCP client needs it; Claude Code, mcp-remote and server-side connectors send no Origin header at all."
+  },
+  {
+   "default": "0",
+   "fieldname": "mcp_allow_sql_writes",
+   "fieldtype": "Check",
+   "label": "Allow MCP SQL Writes",
+   "description": "Off by default. When off, native SQL sent through the MCP endpoint must be a single read-only statement; INSERT, UPDATE, DELETE, DROP, stored procedures, SELECT ... INTO and writes hidden inside a CTE are all refused before reaching the database. Turning this ON removes that protection for EVERY MCP caller, not just one query -- an LLM that misreads a request will then execute the result. The durable alternative is to give the data source a read-only database user, which no setting can override."
   },
   {
    "fieldname": "max_records_to_sync",

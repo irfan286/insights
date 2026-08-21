@@ -29,7 +29,10 @@ Row-level restrictions DO still apply: `apply_user_permissions` is 1, and
 
 import frappe
 
-from insights.insights.query_utils import extract_table_deps_from_operations
+from insights.insights.query_utils import (
+    extract_table_deps_from_operations,
+    extract_table_deps_from_sql_operations,
+)
 from insights.mcp.errors import ToolError, as_tool_error, capture_build_diagnostics
 
 DOCTYPE = "Insights Query v3"
@@ -132,8 +135,26 @@ def resolved_tables(operations: list[dict]) -> list[dict]:
     Derived here rather than accepted as an argument on purpose: a caller that forgot
     to list a table would otherwise skip its check silently, which is exactly the
     failure mode a choke point exists to prevent.
+
+    Native SQL is covered too. `extract_table_deps_from_operations` only inspects an
+    operation's `table` argument, so a `{"type": "sql"}` operation contributes nothing
+    and its tables would go unchecked here. `apply_sql` does bind and check them -- but
+    only when `enable_permissions` or `apply_user_permissions` is on, or when running
+    against the warehouse (`ibis_utils.py`, apply_sql). On a live connection with both
+    flags off, which is the default, that leaves no check at all. Parsing the SQL here
+    means the Frappe doc-level check below runs regardless of those flags.
     """
-    return extract_table_deps_from_operations(operations or [])
+    operations = operations or []
+    deps = extract_table_deps_from_operations(operations)
+
+    seen = {(d["data_source"], d["table_name"]) for d in deps}
+    for dep in extract_table_deps_from_sql_operations(operations):
+        key = (dep.get("data_source"), dep.get("table_name"))
+        if all(key) and key not in seen:
+            seen.add(key)
+            deps.append(dep)
+
+    return deps
 
 
 def _check_table(data_source: str, table_name: str) -> None:

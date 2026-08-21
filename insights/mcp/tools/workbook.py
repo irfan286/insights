@@ -42,30 +42,44 @@ def save_query(
     title: str,
     spec: dict = None,
     raw_operations: list = None,
+    sql: str = None,
+    data_source: str = None,
     workbook: str = None,
     workbook_title: str = None,
     use_live_connection: bool = True,
     **_kw,
 ) -> str:
-    """Persist a QuerySpec as an Insights Query v3 so a chart can be built on it.
+    """Persist a query as an Insights Query v3 so a chart can be built on it.
 
-    Run the spec through run_query first. This tool saves; it does not check that the
-    query returns anything sensible.
+    Run it through run_query (or run_sql) first. This tool saves; it does not check that
+    the query returns anything sensible.
 
-    Supply exactly one of `spec` or `raw_operations`. Omit `workbook` and a new one is
-    created and its name returned -- charts and dashboards must live in the same workbook
-    as the queries they use.
+    Supply exactly one of `spec`, `sql` or `raw_operations`. With `sql` you must also
+    pass `data_source`, and the result is saved as a NATIVE query -- it opens in the SQL
+    editor rather than the visual builder, and the same read-only rules as run_sql apply.
+
+    Omit `workbook` and a new one is created and its name returned -- charts and
+    dashboards must live in the same workbook as the queries they use.
     """
     from insights.mcp.compiler import compile
+    from insights.mcp.sqlguard import assert_read_only, dialect_for
     from insights.mcp.tools.query import _validated_raw
+    from insights.mcp.tools.sql import build_sql_operations
 
-    if bool(spec) == bool(raw_operations):
+    supplied = [n for n, v in (("spec", spec), ("sql", sql), ("raw_operations", raw_operations)) if v]
+    if len(supplied) != 1:
         raise ToolError(
-            "Supply exactly one of `spec` or `raw_operations`.",
-            fix="Prefer `spec`; `raw_operations` is the escape hatch.",
+            f"Supply exactly one of `spec`, `sql` or `raw_operations` — got {len(supplied)}"
+            + (f" ({', '.join(supplied)})" if supplied else ""),
+            fix="Prefer `spec`. Use `sql` when QuerySpec cannot express the query.",
         )
 
-    if spec:
+    is_native = bool(sql)
+    if is_native:
+        operations = build_sql_operations(data_source, sql)
+        assert_read_only(sql, dialect=dialect_for(data_source))
+        columns = None
+    elif spec:
         operations, symbols = compile(spec)
         columns = symbols.to_json()
     else:
@@ -85,7 +99,10 @@ def save_query(
     query = frappe.new_doc("Insights Query v3")
     query.title = title
     query.workbook = workbook
-    query.is_builder_query = 1
+    # These two drive which editor the UI opens the query in. A native query flagged as
+    # a builder query renders an empty visual pipeline over SQL the user cannot see.
+    query.is_builder_query = 0 if is_native else 1
+    query.is_native_query = 1 if is_native else 0
     # The doctype default is 0, which resolves tables through the warehouse. On a bench
     # with nothing imported that silently substitutes an empty temp table.
     query.use_live_connection = 1 if use_live_connection else 0

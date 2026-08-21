@@ -12,6 +12,6 @@ nothing and fails no test on its own, so `test_guards.py::test_every_tool_module
 watches this line.
 """
 
-from insights.mcp.tools import chart, dashboard, discovery, docs, query, workbook  # noqa: F401
+from insights.mcp.tools import chart, dashboard, discovery, docs, query, sql, workbook  # noqa: F401
 
-__all__ = ["chart", "dashboard", "discovery", "docs", "query", "workbook"]
+__all__ = ["chart", "dashboard", "discovery", "docs", "query", "sql", "workbook"]
