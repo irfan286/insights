@@ -72,6 +72,19 @@ class TestInsightsPermissions(InsightsIntegrationTestCase):
             with self.assertRaises(frappe.PermissionError):
                 protected_insights_call()
 
+    def test_insights_role_is_not_enforced_for_public_access(self):
+        # public dashboards are viewed as Guest, run_doc_method sets this flag
+        # only after validating that the doc & the method are publicly accessible
+        with self.as_user("Guest"):
+            with self.assertRaises(frappe.PermissionError):
+                protected_insights_call()
+
+            frappe.flags.insights_for_public_access = True
+            try:
+                self.assertTrue(protected_insights_call())
+            finally:
+                frappe.flags.insights_for_public_access = False
+
     def test_permissions_on_team_based_doctype_with_team_permissions_disabled(self):
         create_test_data_sources()
         create_test_tables()

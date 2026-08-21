@@ -148,8 +148,17 @@ window.fetch = async function () {
 	// @ts-ignore
 	const res = await _fetch(...arguments)
 	if (res.status === 403 && (!document.cookie || document.cookie.includes('user_id=Guest'))) {
-		session.resetSession()
-		router.push('/login')
+		// on a public (guest) view, a document action can legitimately fail with a
+		// 403 (e.g. downloads disabled) — that's an error to show, not a reason to
+		// bounce the visitor to login. Loading the document itself failing still is.
+		const isGuestView = Boolean(router.currentRoute.value.meta?.isGuestView)
+		// @ts-ignore
+		const url = String(arguments[0]?.url ?? arguments[0] ?? '')
+		const isDocAction = url.includes('insights.api.run_doc_method')
+		if (!(isGuestView && isDocAction)) {
+			session.resetSession()
+			router.push('/login')
+		}
 	}
 	return res
 }
