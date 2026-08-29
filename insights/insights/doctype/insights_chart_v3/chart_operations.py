@@ -126,6 +126,26 @@ def set_dimension_names(config: dict) -> dict:
     return config
 
 
+def ensure_config_slots(config: dict, chart_type: str) -> dict:
+    """charts/helpers.ts:1535-1549.
+
+    The empty containers a config form binds to before a human has filled anything in.
+    A config that reaches the UI without them is mutated on the first render, so an
+    MCP-written chart has to carry them too or the two never compare equal.
+    """
+    if chart_type in AXIS_CHARTS:
+        config["x_axis"] = config.get("x_axis") or {}
+        config["x_axis"]["dimension"] = config["x_axis"].get("dimension") or {}
+        config["y_axis"] = config.get("y_axis") or {}
+        config["y_axis"]["series"] = config["y_axis"].get("series") or []
+
+    if chart_type == "Map":
+        config["location_column"] = config.get("location_column") or {}
+        config["value_column"] = config.get("value_column") or {}
+
+    return config
+
+
 def normalize_config(chart_type: str, config) -> dict:
     """Every default `transformChartDoc` injects on load, applied up front instead.
 
@@ -152,7 +172,16 @@ def normalize_config(chart_type: str, config) -> dict:
     if chart_type == "Donut":
         config["legend_position"] = config.get("legend_position") or "bottom"
 
-    return set_dimension_names(config)
+    config = set_dimension_names(config)
+    config = ensure_config_slots(config, chart_type)
+
+    # The bar config form writes this default when it mounts, which leaves a freshly
+    # opened chart dirty, so `transformChartDoc` sets it on load instead. Absence is
+    # what carries the default -- a config that says `False` meant it.
+    if chart_type == "Bar" and "stack" not in config["y_axis"]:
+        config["y_axis"]["stack"] = True
+
+    return config
 
 
 # ---------------------------------------------------------------------------

@@ -30,8 +30,8 @@ FRONTEND = Path(frappe.get_app_path("insights")).parent / "frontend" / "src2" / 
 # function name -> sha256 of its normalised body
 FINGERPRINTS = {
     "chart.ts": {
-        "refresh": "2094ab624da04583",
-        "validateConfig": "1eb04bfa5e9fb684",
+        "refresh": "6e778f47d8d9b37a",
+        "validateConfig": "8ee88d3ad624f4f7",
         "addSourceOperation": "1c916bf2120afd97",
         "addFilterOperation": "3c1c429e2f2175cc",
         "addChartOperation": "b280f1489538a5fb",
@@ -42,7 +42,7 @@ FINGERPRINTS = {
         "addMapChartOperation": "e14db6383104668e",
         "addBubbleChartOperation": "00dd92e6e16f2274",
         "addOrderByOperation": "0c8b85bee9d9571f",
-        "transformChartDoc": "09fa5ce07cc88fc0",
+        "transformChartDoc": "e6346e6826647265",
     },
     "helpers.ts": {
         "setDimensionNames": "36930311d5ed509d",
