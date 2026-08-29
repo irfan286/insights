@@ -411,7 +411,36 @@ class TestNormalizeConfig(UnitTestCase):
 
     def test_old_list_y_axis_is_wrapped_into_series(self):
         config = normalize_config("Bar", {"y_axis": [measure("price")]})
-        self.assertEqual(config["y_axis"], {"series": [{"measure": measure("price")}]})
+        # `stack` rides along on a Bar -- test_bar_stack_defaults_to_true covers it
+        self.assertEqual(
+            config["y_axis"],
+            {"series": [{"measure": measure("price")}], "stack": True},
+        )
+
+    def test_bar_stack_defaults_to_true(self):
+        """The default `transformChartDoc` sets on load, rather than the form on mount."""
+        self.assertIs(normalize_config("Bar", {})["y_axis"]["stack"], True)
+
+    def test_an_explicit_stack_is_kept(self):
+        """Absence carries the default, so a config that said False keeps saying it."""
+        self.assertIs(normalize_config("Bar", {"y_axis": {"stack": False}})["y_axis"]["stack"], False)
+
+    def test_only_a_bar_gets_the_stack_default(self):
+        self.assertNotIn("stack", normalize_config("Line", {})["y_axis"])
+
+    def test_axis_chart_config_slots_are_seeded(self):
+        """`ensureConfigSlots`: the empty containers a config form binds to."""
+        config = normalize_config("Line", {})
+        self.assertEqual(config["x_axis"], {"dimension": {}})
+        self.assertEqual(config["y_axis"], {"series": []})
+
+    def test_map_config_slots_are_seeded(self):
+        config = normalize_config("Map", {})
+        self.assertEqual(config["location_column"], {})
+        self.assertEqual(config["value_column"], {})
+
+    def test_slots_are_not_seeded_for_other_chart_types(self):
+        self.assertNotIn("x_axis", normalize_config("Donut", {}))
 
     def test_dimension_names_are_backfilled(self):
         config = normalize_config(

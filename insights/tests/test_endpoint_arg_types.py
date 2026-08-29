@@ -6,6 +6,9 @@ function it decorates, so it read an empty `__annotations__` and checked
 nothing. It now decorates the endpoint itself.
 """
 
+import unittest
+from pathlib import Path
+
 import frappe
 
 from insights.api.shared import is_public
@@ -27,6 +30,29 @@ from insights.tests.factories import (
     create_test_workbook,
     delete_users,
 )
+
+
+def frappe_refuses_unannotated_endpoints() -> bool:
+    """Whether the installed frappe acts on `require_type_annotated_api_methods`.
+
+    `hooks.py` declares the hook, but only the framework can enforce it, and a frappe
+    that never reads it leaves an endpoint without annotations callable. This fork runs
+    frappe v16.29.0, where the name appears nowhere: `validate_argument_types` returns
+    early for a function whose `__annotations__` are empty, and nothing refuses it
+    sooner. The endpoints that *do* declare types are still checked -- the other tests
+    here pin that -- so what is missing is the guard against a future endpoint that
+    forgets to declare any.
+
+    Read from source rather than pinned to a version, so the test starts running again
+    on a frappe that implements it.
+    """
+    root = Path(frappe.__file__).parent
+    candidates = (root / "handler.py", root / "__init__.py", root / "utils" / "typing_validations.py")
+    return any(
+        "require_type_annotated_api_methods" in path.read_text(errors="ignore")
+        for path in candidates
+        if path.exists()
+    )
 
 OWNER = USER_1
 
@@ -65,6 +91,10 @@ class EndpointsCheckArgumentTypes(InsightsIntegrationTestCase):
         with as_user(OWNER), self.assertRaises(TypeError):
             takes_a_name({"title": "not a name"})
 
+    @unittest.skipUnless(
+        frappe_refuses_unannotated_endpoints(),
+        "this frappe does not implement require_type_annotated_api_methods",
+    )
     def test_an_unannotated_endpoint_is_refused(self):
         """`require_type_annotated_api_methods` is on, so frappe refuses one."""
 
