@@ -1,6 +1,6 @@
 import { reactive, ref, toRefs } from 'vue'
 // @ts-ignore
-import { useTelemetry } from 'frappe-ui/frappe'
+import { useTelemetry } from '../telemetry'
 import useChart from '../charts/chart'
 import {
 	copy,
@@ -234,7 +234,18 @@ function makeDashboard(name: string) {
 	function refreshChart(chart_name: string, force = false) {
 		const chart = useChart(chart_name)
 		chart.dataQuery.adhocFilters = getAdhocFilters(chart_name)
+		chart.dataQuery.executionPriority = getLayoutRank(chart_name)
 		chart.refresh(force)
+	}
+
+	// charts reach the queue in whatever order their docs finish loading, so rank
+	// them by grid position instead: top row first, left to right within a row
+	function getLayoutRank(chart_name: string) {
+		const item = dashboard.doc.items.find(
+			(item) => item.type === 'chart' && item.chart === chart_name
+		)
+		if (!item) return undefined
+		return item.layout.y * grid_cols + item.layout.x
 	}
 
 	function getAdhocFilters(chart_name: string, exclude_filter_name?: string) {
@@ -584,6 +595,14 @@ function getDashboardResource(name: string) {
 		disableLocalStorage: true,
 		transform(doc: any) {
 			doc.items = safeJSONParse(doc.items) || []
+			// grid-layout-plus owns `moved` and writes it into every layout when
+			// the grid mounts, which leaves a freshly opened dashboard dirty.
+			// Set it on load instead.
+			doc.items.forEach((item: any) => {
+				if (item.layout && item.layout.moved === undefined) {
+					item.layout.moved = false
+				}
+			})
 			return doc
 		},
 	})

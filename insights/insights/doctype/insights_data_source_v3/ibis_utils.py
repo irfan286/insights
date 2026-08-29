@@ -3,6 +3,7 @@ import re
 import time
 from contextlib import contextmanager
 from datetime import date
+from functools import cached_property
 
 import frappe
 import ibis
@@ -26,12 +27,12 @@ from insights.insights.doctype.insights_table_v3.insights_table_v3 import (
     InsightsTablev3,
 )
 from insights.insights.query_builders.sql_functions import handle_timespan
-from insights.insights.query_utils import extract_sql_table_refs
+from insights.insights.query_utils import extract_sql_table_refs, get_direct_dependencies
 from insights.utils import create_execution_log
 from insights.utils import deep_convert_dict_to_dict as _dict
 
 from .ibis.functions import fiscal_year_start, week_start
-from .ibis.utils import get_functions
+from .ibis.utils import assert_expression_has_no_io, get_functions
 
 try:
     from frappe.concurrency_limiter import concurrent_limit
@@ -108,7 +109,7 @@ class IbisQueryBuilder:
                 except CircularQueryReferenceError:
                     raise
                 except BaseException as e:
-                    operation_type_title = frappe.bold(operation.type.title())
+                    operation_type_title = operation.type.title()
                     create_toast(
                         title=f"Failed to Build {self.title} Query",
                         message=f"Please check the {operation_type_title} operation at position {idx + 1}",
@@ -156,6 +157,24 @@ class IbisQueryBuilder:
             return self.apply_code(operation)
         return self.query
 
+    @cached_property
+    def saved_references(self):
+        """The references stored on this query, which `validate` authorised.
+
+        Read from the row, not from the document being built: that one may have
+        come from a request body, which authorises nothing.
+        """
+        return set(get_direct_dependencies(self.doc.get("name")))
+
+    def check_query_reference(self, query_name):
+        """A saved reference is authorised. Anything else is checked now."""
+        if query_name in self.saved_references:
+            return
+
+        from insights.permissions import check_referenced_query_access
+
+        check_referenced_query_access(query_name)
+
     def get_table_or_query(self, table_args):
         _table = None
 
@@ -166,6 +185,7 @@ class IbisQueryBuilder:
                 use_live_connection=self.use_live_connection,
             )
         if table_args.type == "query":
+            self.check_query_reference(table_args.query_name)
             q = frappe.get_doc("Insights Query v3", table_args.query_name)
             _table = q.build(use_live_connection=self.use_live_connection)
 
@@ -615,10 +635,9 @@ class IbisQueryBuilder:
         raw_sql = sqlparse.format(sql=raw_sql, strip_comments=True)
         raw_sql = self._validate_native_sql(raw_sql, use_live_connection=self.use_live_connection)
 
-        check_permissions = (
-            frappe.db.get_single_value("Insights Settings", "enable_permissions")
-            or frappe.db.get_single_value("Insights Settings", "apply_user_permissions")
-        )
+        check_permissions = frappe.db.get_single_value(
+            "Insights Settings", "enable_permissions"
+        ) or frappe.db.get_single_value("Insights Settings", "apply_user_permissions")
 
         if check_permissions or not self.use_live_connection:
             tables = self._get_sql_table_names(
@@ -995,7 +1014,11 @@ def execute_ibis_query(
                 title="Query execution time exceeded the limit.",
                 message=f"Query: {sql}",
             )
-            max_time = frappe.db.get_single_value("Insights Settings", "max_execution_time") or 180
+            from insights.insights.doctype.insights_settings.insights_settings import (
+                get_max_execution_time,
+            )
+
+            max_time = get_max_execution_time()
             frappe.throw(
                 title="Query Timeout",
                 msg=f"Query execution time exceeded the limit of {max_time} seconds. Please try again with a smaller timespan or a more specific filter.",
@@ -1017,7 +1040,10 @@ def execute_ibis_query(
     return result, time_taken
 
 
-@concurrent_limit()
+# reject immediately instead of waiting for a slot: a blocked request holds on to a
+# web thread, so waiting here is what starves the pool when a dashboard executes all
+# of its charts at once. The frontend retries on the 503.
+@concurrent_limit(wait_timeout=0)
 def _execute_live_query(query: IbisQuery):
     start = time.monotonic()
     result = query.execute()
@@ -1058,26 +1084,36 @@ def to_insights_type(dtype: DataType):
     return "String"
 
 
+def _results_cache_key(cache_key):
+    # v2 stores the column names alongside the rows, so the prefix change drops
+    # the v1 entries that cannot be read back with their schema intact
+    return "insights:query_results:v2:" + cache_key
+
+
 def cache_results(cache_key, result: pd.DataFrame, cache_expiry=3600):
-    cache_key = "insights:query_results:" + cache_key
-    data = result.to_dict(orient="records")
-    data = frappe.as_json(data)
-    frappe.cache().set_value(cache_key, data, expires_in_sec=cache_expiry)
+    payload = {
+        "columns": list(result.columns),
+        "rows": result.to_dict(orient="records"),
+    }
+    frappe.cache().set_value(
+        _results_cache_key(cache_key),
+        frappe.as_json(payload),
+        expires_in_sec=cache_expiry,
+    )
 
 
 def get_cached_results(cache_key) -> pd.DataFrame:
-    cache_key = "insights:query_results:" + cache_key
-    data = frappe.cache().get_value(cache_key)
+    data = frappe.cache().get_value(_results_cache_key(cache_key))
     if not data:
         return None
-    data = frappe.parse_json(data)
-    df = pd.DataFrame(data).replace({pd.NaT: None, np.nan: None})
-    return df
+    payload = frappe.parse_json(data)
+    # a result with no rows still has columns, and records alone cannot carry them
+    df = pd.DataFrame(payload["rows"], columns=payload["columns"])
+    return df.replace({pd.NaT: None, np.nan: None})
 
 
 def has_cached_results(cache_key):
-    cache_key = "insights:query_results:" + cache_key
-    return frappe.cache().get_value(cache_key) is not None
+    return frappe.cache().get_value(_results_cache_key(cache_key)) is not None
 
 
 def exec_with_return(
@@ -1085,6 +1121,8 @@ def exec_with_return(
     _globals: dict | None = None,
     _locals: dict | None = None,
 ):
+    assert_expression_has_no_io(script)
+
     tree = ast.parse(script)
 
     if not tree.body:

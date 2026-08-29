@@ -12,6 +12,7 @@
   "max_download_rows",
   "enable_data_store",
   "apply_user_permissions",
+  "disable_user_lookup",
   "allowed_origins",
   "mcp_allowed_origins",
   "mcp_allow_sql_writes",
@@ -168,6 +169,15 @@
    "label": "Apply User Permissions"
   },
   {
+   "default": "0",
+   "description": "Stops members from finding each other by name or email when sharing. Turn this on for a site where anyone can sign up.",
+   "fieldname": "disable_user_lookup",
+   "fieldtype": "Check",
+   "label": "Disable User Lookup"
+  },
+  {
+   "default": "60",
+   "description": "Interactive queries are cancelled after this many seconds. Applies to new connections and to live (non-data-store) queries; background imports are exempt.",
    "fieldname": "max_execution_time",
    "fieldtype": "Int",
    "label": "Max Execution Time (Seconds)"

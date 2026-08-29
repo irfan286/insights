@@ -2,8 +2,28 @@ import frappe
 from frappe import _
 
 from insights.decorators import insights_whitelist
-from insights.insights.doctype.insights_team.insights_team import is_admin
+from insights.permissions import get_insights_users
 from insights.utils import DocShare
+
+
+def validate_shareable_users(emails):
+    """A workbook is shareable with Insights users only.
+
+    The picker cannot always show the person being named - an address typed by
+    a user who may not look anyone up still has to land somewhere real.
+    """
+    if not emails:
+        return
+
+    # Administrator owns the workbooks a template import creates and so stays on
+    # the share list whenever one of them is re-shared
+    shareable = get_insights_users() | {"Administrator"}
+    unknown = sorted(set(emails) - shareable)
+    if unknown:
+        frappe.throw(
+            _("Cannot share with {0} - they are not an Insights user").format(", ".join(unknown)),
+            title=_("Not an Insights user"),
+        )
 
 
 @insights_whitelist()
@@ -11,7 +31,6 @@ def get_workbooks(
     search_term: str | None = None,
     limit: int = 100,
     scope: str | None = None,
-    folder: str | None = None,
 ):
     """Return workbooks accessible to the current user.
 
@@ -19,20 +38,12 @@ def get_workbooks(
         "owned"  -> only workbooks owned by the current user
         "shared" -> only workbooks owned by someone else (still permission filtered)
         None     -> all accessible workbooks
-    folder:
-        when provided, only workbooks filed directly under this folder
-        (use the sentinel "" / "root" to restrict to unfiled workbooks)
     """
     filters = {}
     if scope == "owned":
         filters["owner"] = frappe.session.user
     elif scope == "shared":
         filters["owner"] = ["!=", frappe.session.user]
-
-    if folder in ("", "root"):
-        filters["folder"] = ["is", "not set"]
-    elif folder:
-        filters["folder"] = folder
 
     or_filters = {"title": ["like", f"%{search_term}%"]} if search_term else None
 
@@ -44,7 +55,6 @@ def get_workbooks(
             "name",
             "title",
             "owner",
-            "folder",
             "creation",
             "modified",
         ],
@@ -62,40 +72,61 @@ def get_workbooks(
         fields=["reference_name", "name"],
     )
     for workbook in workbooks:
-        views = [view for view in workbook_views if str(view["reference_name"]) == str(workbook["name"])]
+        views = [view for view in workbook_views if view["reference_name"] == workbook["name"]]
         workbook["views"] = len(views)
 
+    # batch the share lookups into two grouped queries instead of ~2 per
+    # workbook (avoids an N+1 over the whole list)
+    org_shared, shared_users = _workbook_shares(workbook_names)
     for workbook in workbooks:
-        organization_has_access = frappe.db.exists(
-            "DocShare",
-            {
-                "share_doctype": "Insights Workbook",
-                "share_name": workbook["name"],
-                "everyone": 1,
-                "read": 1,
-            },
-        )
-        if organization_has_access:
+        name = workbook["name"]
+        if name in org_shared:
             workbook["shared_with_organization"] = True
             continue
-
-        shared_with = frappe.get_all(
-            "DocShare",
-            filters={
-                "share_doctype": "Insights Workbook",
-                "share_name": workbook["name"],
-                "user": ["!=", workbook["owner"]],
-                "read": 1,
-            },
-            pluck="user",
-        )
-        workbook["shared_with"] = shared_with
+        workbook["shared_with"] = [user for user in shared_users.get(name, []) if user != workbook["owner"]]
 
     return workbooks
 
 
+def _workbook_shares(names: list[str]) -> tuple[set, dict]:
+    """Return (org-shared workbook names, {workbook name -> [users it's read-shared with]}).
+
+    Two queries for the whole list instead of an exists-check + fetch per workbook.
+    """
+    if not names:
+        return set(), {}
+
+    org_shared = set(
+        frappe.get_all(
+            "DocShare",
+            filters={
+                "share_doctype": "Insights Workbook",
+                "share_name": ["in", names],
+                "everyone": 1,
+                "read": 1,
+            },
+            pluck="share_name",
+        )
+    )
+
+    shared_users: dict[str, list] = {}
+    rows = frappe.get_all(
+        "DocShare",
+        filters={
+            "share_doctype": "Insights Workbook",
+            "share_name": ["in", names],
+            "read": 1,
+        },
+        fields=["share_name", "user"],
+    )
+    for row in rows:
+        shared_users.setdefault(row["share_name"], []).append(row["user"])
+
+    return org_shared, shared_users
+
+
 @insights_whitelist()
-def import_workbook(workbook: dict):
+def import_workbook(workbook: dict | str):
     from insights.insights.doctype.insights_workbook.insights_workbook import import_workbook
 
     return import_workbook(workbook)
@@ -119,6 +150,7 @@ def get_share_permissions(workbook_name: str):
             DocShare.write,
             DocShare.share,
             User.full_name,
+            User.user_image,
         )
         .where(DocShare.share_doctype == "Insights Workbook")
         .where(DocShare.share_name == workbook_name)
@@ -126,10 +158,12 @@ def get_share_permissions(workbook_name: str):
         .run(as_dict=True)
     )
     owner = frappe.db.get_value("Insights Workbook", workbook_name, "owner")
+    owner_info = frappe.db.get_value("User", owner, ["full_name", "user_image"], as_dict=True) or {}
     user_permissions.append(
         {
             "user": owner,
-            "full_name": frappe.get_value("User", owner, "full_name"),
+            "full_name": owner_info.get("full_name"),
+            "user_image": owner_info.get("user_image"),
             "read": 1,
             "write": 1,
         }
@@ -157,7 +191,7 @@ def get_share_permissions(workbook_name: str):
 
 @insights_whitelist()
 def update_share_permissions(
-    workbook_name: str, user_permissions: dict, organization_access: str | None = None
+    workbook_name: str, user_permissions: list, organization_access: str | None = None
 ):
     if not frappe.has_permission("Insights Workbook", ptype="share", doc=workbook_name):
         frappe.throw(_("You do not have permission to share this workbook"), frappe.PermissionError)
@@ -172,6 +206,7 @@ def update_share_permissions(
     )
 
     allowed_users = {permission["user"] for permission in user_permissions}
+    validate_shareable_users(allowed_users)
     for share in existing_shares:
         if share.user and share.user not in allowed_users:
             frappe.delete_doc("DocShare", share.name, ignore_permissions=True)
@@ -273,169 +308,96 @@ def toggle_folder_expanded(folder_name: str, is_expanded: bool):
     folder.db_set("is_expanded", is_expanded, update_modified=False)
 
 
+ITEM_DOCTYPES = {
+    "folder": "Insights Folder",
+    "query": "Insights Query v3",
+    "chart": "Insights Chart v3",
+}
+
+
+def item_workbook(doctype: str, name) -> str | None:
+    """The workbook holding this row, or None if the row is gone.
+
+    The write goes straight to the row, so the permission query that scopes the
+    read never sees it - this read is what scopes the write. A dict is not a
+    name: `frappe.db` reads one as a filter set and would match every row.
+
+    Gone and held by someone else are different answers, and the callers want
+    different things from each, so this reports and they decide.
+    """
+    if not isinstance(name, str):
+        frappe.throw(_("{0} is not the name of a {1}").format(name, doctype))
+
+    return frappe.db.get_value(doctype, name, "workbook")
+
+
+def refuse_another_workbooks_item(doctype: str, name, holder: str | None, workbook: str) -> None:
+    """A row this workbook does not hold is not this caller's to write."""
+    if holder != workbook:
+        frappe.throw(
+            _("{0} {1} does not belong to this workbook").format(doctype, name),
+            frappe.PermissionError,
+        )
+
+
 @insights_whitelist()
 def move_item_to_folder(item_type: str, item_name: str, folder_name: str | None = None):
     """Move a query/chart to a folder"""
-    doctype = "Insights Query v3" if item_type == "query" else "Insights Chart v3"
+    doctype = ITEM_DOCTYPES.get(item_type)
+    if not doctype or doctype == "Insights Folder":
+        frappe.throw(_("{0} is not a movable item type").format(item_type))
+
     item = frappe.get_doc(doctype, item_name)
 
     if not frappe.has_permission("Insights Workbook", ptype="write", doc=item.workbook):
         frappe.throw(_("You do not have permission to modify this workbook"), frappe.PermissionError)
 
     if folder_name:
-        folder = frappe.get_doc("Insights Folder", folder_name)
-        if folder.workbook != item.workbook:
-            frappe.throw(_("Folder and item must belong to the same workbook"))
+        holder = item_workbook("Insights Folder", folder_name)
+        if holder is None:
+            frappe.throw(_("Insights Folder {0} not found").format(folder_name))
+        refuse_another_workbooks_item("Insights Folder", folder_name, holder, item.workbook)
 
     item.db_set("folder", folder_name, update_modified=False)
 
 
 @insights_whitelist()
 def update_sort_orders(workbook: str, items: list):
-    """Bulk update sort orders"""
+    """Order a workbook's own queries, charts and folders"""
     if not frappe.has_permission("Insights Workbook", ptype="write", doc=workbook):
         frappe.throw(_("You do not have permission to modify this workbook"), frappe.PermissionError)
 
     for item in items:
-        if item["type"] == "folder":
-            frappe.db.set_value(
-                "Insights Folder",
-                item["name"],
-                {
-                    "sort_order": item["sort_order"],
-                },
-                update_modified=False,
-            )
-        elif item["type"] == "query":
-            frappe.db.set_value(
-                "Insights Query v3",
-                item["name"],
-                {
-                    "sort_order": item["sort_order"],
-                    "folder": item.get("folder"),
-                },
-                update_modified=False,
-            )
-        elif item["type"] == "chart":
-            frappe.db.set_value(
-                "Insights Chart v3",
-                item["name"],
-                {
-                    "sort_order": item["sort_order"],
-                    "folder": item.get("folder"),
-                },
-                update_modified=False,
-            )
+        doctype = ITEM_DOCTYPES.get(item.get("type"))
+        if not doctype:
+            frappe.throw(_("{0} is not a workbook item type").format(item.get("type")))
+
+        sort_order = item.get("sort_order")
+        if not isinstance(sort_order, int):
+            frappe.throw(_("{0} is not a sort order").format(sort_order))
+
+        # the client sends the whole list after a drag, so it can name an item
+        # someone else has since deleted. That item has nothing to order.
+        holder = item_workbook(doctype, item.get("name"))
+        if holder is None:
+            continue
+
+        refuse_another_workbooks_item(doctype, item["name"], holder, workbook)
+
+        values = {"sort_order": sort_order}
+        if doctype != "Insights Folder":
+            folder = item.get("folder")
+            if folder:
+                # a deleted folder leaves its items at the root, which is what
+                # `delete_folder` does. One held by another workbook is refused,
+                # because dropping the item at the root would hide the refusal.
+                folder_holder = item_workbook("Insights Folder", folder)
+                if folder_holder is None:
+                    folder = None
+                else:
+                    refuse_another_workbooks_item("Insights Folder", folder, folder_holder, workbook)
+            values["folder"] = folder
+
+        frappe.db.set_value(doctype, item["name"], values, update_modified=False)
 
     frappe.db.commit()
-
-
-# Workbook Folder (org-level) APIs
-#
-# These organize workbooks themselves into a shared, org-level tree.
-# This is distinct from `Insights Folder` above, which organizes
-# queries/charts *inside* a single workbook.
-
-
-def _ensure_workbook_folder_admin():
-    if not is_admin(frappe.session.user):
-        frappe.throw(
-            _("Only an Insights Admin can manage workbook folders"),
-            frappe.PermissionError,
-        )
-
-
-@insights_whitelist()
-def get_workbook_folders():
-    """Return the full org-level workbook folder tree.
-
-    The client builds the subfolder list and breadcrumb from this flat tree and
-    fetches the workbooks of a given folder via `get_workbooks(folder=...)`.
-    """
-    folders = frappe.get_all(
-        "Insights Workbook Folder",
-        fields=["name", "title", "parent_folder"],
-        order_by="title asc",
-    )
-    # name is an autoincrement int; link fields store it as a string, so expose
-    # it as a string everywhere to keep comparisons consistent
-    for f in folders:
-        f["name"] = str(f["name"])
-    return folders
-
-
-@insights_whitelist()
-def create_workbook_folder(title: str, parent_folder: str | None = None):
-    """Create an org-level workbook folder (admin only)."""
-    _ensure_workbook_folder_admin()
-
-    folder = frappe.new_doc("Insights Workbook Folder")
-    folder.title = title
-    folder.parent_folder = parent_folder or None
-    folder.insert()
-    return str(folder.name)
-
-
-@insights_whitelist()
-def rename_workbook_folder(folder_name: str, new_title: str):
-    """Rename an org-level workbook folder (admin only)."""
-    _ensure_workbook_folder_admin()
-
-    folder = frappe.get_doc("Insights Workbook Folder", folder_name)
-    folder.title = new_title
-    folder.save()
-    return folder.name
-
-
-@insights_whitelist()
-def delete_workbook_folder(folder_name: str):
-    """Delete an empty org-level workbook folder (admin only).
-
-    Deletion is blocked while the folder still contains subfolders or workbooks.
-    """
-    _ensure_workbook_folder_admin()
-
-    has_subfolders = frappe.db.exists("Insights Workbook Folder", {"parent_folder": folder_name})
-    has_workbooks = frappe.db.exists("Insights Workbook", {"folder": folder_name})
-    if has_subfolders or has_workbooks:
-        frappe.throw(
-            _("Cannot delete a folder that is not empty. Move its contents out first."),
-        )
-
-    frappe.delete_doc("Insights Workbook Folder", folder_name)
-
-
-@insights_whitelist()
-def move_workbook_to_folder(workbook: str, folder: str | None = None):
-    """File a workbook into a folder (or back to root when folder is None).
-
-    A user can file workbooks they can write to; the org folder structure
-    itself is admin-governed, but filing is open.
-    """
-    if not frappe.has_permission("Insights Workbook", ptype="write", doc=workbook):
-        frappe.throw(_("You do not have permission to modify this workbook"), frappe.PermissionError)
-
-    if folder and not frappe.db.exists("Insights Workbook Folder", folder):
-        frappe.throw(_("Folder {0} does not exist").format(folder))
-
-    frappe.db.set_value("Insights Workbook", workbook, "folder", folder or None)
-
-
-@insights_whitelist()
-def move_workbooks_to_folder(workbooks: list, folder: str | None = None):
-    """Bulk-file workbooks into a folder (or back to root when folder is None).
-
-    Workbooks the user can't write to are skipped; the count actually moved is
-    returned so the client can report it.
-    """
-    if folder and not frappe.db.exists("Insights Workbook Folder", folder):
-        frappe.throw(_("Folder {0} does not exist").format(folder))
-
-    moved = 0
-    for workbook in workbooks:
-        if not frappe.has_permission("Insights Workbook", ptype="write", doc=workbook):
-            continue
-        frappe.db.set_value("Insights Workbook", workbook, "folder", folder or None)
-        moved += 1
-
-    return moved

@@ -12,7 +12,7 @@ dependencies = [
     "SQLAlchemy==2.0.41",
     "python-telegram-bot==21.4",
     "duckdb~=1.4.3",
-    "sqlglot<28.0.0",
+    "sqlglot>=30.12.0,<31",
     "ibis-framework~=11.0.0",
     "ibis-framework[duckdb]",
     "ibis-framework[mysql]",
@@ -42,6 +42,9 @@ dependencies = [
     # upstream issue #5.
     "frappe-mcp @ git+https://github.com/Irfan234-afif/frappe-mcp@bef8fbf8f1e2ad053c3956712612c18d355bde1d",
 ]
+
+[tool.bench.frappe-dependencies]
+frappe = ">=15.0.0"
 
 [project.optional-dependencies]
 test = [

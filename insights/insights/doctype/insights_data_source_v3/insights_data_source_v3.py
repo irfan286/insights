@@ -139,6 +139,7 @@ class InsightsDataSourceDocument:
                 or self.host != doc_before.host
                 or self.port != doc_before.port
                 or self.use_ssl != doc_before.use_ssl
+                or self.ssl_ca != doc_before.ssl_ca
             )
 
     def on_trash(self):
@@ -234,12 +235,35 @@ class InsightsDataSourcev3(InsightsDataSourceDocument, Document):
         password: DF.Password | None
         port: DF.Int
         schema: DF.Data | None
+        ssl_ca: DF.SmallText | None
         status: DF.Literal["Inactive", "Active"]
         title: DF.Data
         type: DF.Literal["Database", "REST API"]
         use_ssl: DF.Check
         username: DF.Data | None
     # end: auto-generated types
+
+    def throw_connection_error(self, error: Exception):
+        """Report a failed connection without repeating what the driver said.
+
+        A driver names the host it could not reach, the account it was refused
+        as, and — when the source is configured by connection string — the
+        password inside it. Anyone who may edit the data source has already
+        seen all three, so they read the driver's own words. Everyone else,
+        including a Guest running a published query, gets the fact and nothing
+        else. The detail stays in the Error Log either way.
+        """
+        frappe.log_error(title=f"Failed to connect to '{self.title}'")
+        may_configure = frappe.has_permission(self.doctype, "write", self)
+        frappe.throw(
+            title="Connection Error",
+            msg=(
+                f"There was an error connecting to '{self.title}' data source: {error!s}"
+                if may_configure
+                else f"Could not connect to the '{self.title}' data source."
+            ),
+            exc=DataSourceConnectionError,
+        )
 
     def _get_ibis_backend(self) -> BaseBackend:
         if self.name in insights.db_connections:
@@ -248,11 +272,7 @@ class InsightsDataSourcev3(InsightsDataSourceDocument, Document):
         try:
             db: BaseBackend = self._get_db_connection()
         except Exception as e:
-            frappe.throw(
-                title="Connection Error",
-                msg=f"There was an error connecting to '{self.title}' data source: {e!s}",
-                exc=DataSourceConnectionError,
-            )
+            self.throw_connection_error(e)
 
         if self.database_type == "MariaDB":
             db.raw_sql("SET SESSION time_zone='+00:00'")
@@ -262,12 +282,13 @@ class InsightsDataSourcev3(InsightsDataSourceDocument, Document):
             except Exception:
                 db.raw_sql("SET SESSION TRANSACTION_READ_ONLY = 1")
 
-            MAX_STATEMENT_TIMEOUT = (
-                frappe.db.get_single_value("Insights Settings", "max_execution_time", cache=True) or 180
+            from insights.insights.doctype.insights_settings.insights_settings import (
+                get_max_execution_time,
             )
+
             ## Todo: Permanent fix for this
             try:
-                db.raw_sql(f"SET MAX_STATEMENT_TIME={MAX_STATEMENT_TIMEOUT}")
+                db.raw_sql(f"SET MAX_STATEMENT_TIME={get_max_execution_time()}")
             except Exception:
                 pass
 
@@ -329,6 +350,51 @@ class InsightsDataSourcev3(InsightsDataSourceDocument, Document):
 
         frappe.throw(f"Unsupported database type: {self.database_type}")
 
+    def get_postgres_schemas(self) -> list[str]:
+        """Schemas this data source reads from, as a comma separated list in `schema`."""
+        schemas = [s.strip() for s in (self.schema or "").split(",") if s.strip()]
+        return schemas or ["public"]
+
+    def qualify_table_names(self) -> bool:
+        """Whether table names should carry a `<schema>.` prefix.
+
+        Only useful when the data source spans more than one schema — with a single schema
+        there is nothing to disambiguate and the prefix just leaks into the UI and breaks the
+        table -> doctype mapping for frappe databases (frappe/insights#1195).
+        """
+        return self.database_type == "PostgreSQL" and len(self.get_postgres_schemas()) > 1
+
+    def format_table_name(self, table: str, schema: str | None = None) -> str:
+        """Name `table` the way `get_table_list` does, so it matches `Insights Table v3`.
+
+        `schema` defaults to the first one configured, which is where a frappe database
+        keeps its tables.
+        """
+        if not self.qualify_table_names():
+            return table
+        return f"{schema or self.get_postgres_schemas()[0]}.{table}"
+
+    def split_table_name(self, table_name: str) -> tuple[str, str]:
+        """Resolve `(schema, table)` for a postgres table name — inverse of `format_table_name`.
+
+        Names are only qualified when the data source spans multiple schemas, but names
+        stored before that was the case may still carry the prefix — so accept both.
+
+        A third spelling exists on this fork: rows synced before the dot was the
+        separator carry `<schema>__<table>`. A double underscore is legal inside a
+        table name, so the prefix has to name a configured schema to be read as one.
+        """
+        schemas = self.get_postgres_schemas()
+        schema, separator, table = table_name.partition(".")
+        if separator and schema in schemas:
+            return schema, table
+
+        schema, separator, table = table_name.partition("__")
+        if separator and schema in schemas:
+            return schema, table
+
+        return schemas[0], table_name
+
     def get_table_list(self):
         db = self._get_ibis_backend()
 
@@ -343,13 +409,10 @@ class InsightsDataSourcev3(InsightsDataSourceDocument, Document):
             return db.list_tables(database=self.schema)
 
         if self.database_type == "PostgreSQL":
-            schema = self.schema or "public"
-            schemas = schema.split(",")
             tables = []
-            for schema in schemas:
+            for schema in self.get_postgres_schemas():
                 schema_tables = db.list_tables(database=(database_name, schema))
-                schema_tables = [f"{schema}.{table}" for table in schema_tables]
-                tables.extend(schema_tables)
+                tables.extend(self.format_table_name(table, schema) for table in schema_tables)
             return tables
 
         contains_special_chars = re.search(r"[^a-zA-Z0-9_]", database_name)
@@ -440,17 +503,8 @@ class InsightsDataSourcev3(InsightsDataSourceDocument, Document):
     def get_ibis_table(self, table_name):
         remote_db = self._get_ibis_backend()
         if self.database_type == "PostgreSQL":
-            if "." in table_name:
-                schema, table = table_name.split(".", 1)
-                return remote_db.table(table, database=schema)
-            # legacy format: schema__table (double underscore)
-            if "__" in table_name:
-                parts = table_name.split("__", 1)
-                schema, table = parts[0], parts[1]
-                try:
-                    return remote_db.table(table, database=schema)
-                except Exception:
-                    pass
+            schema, table = self.split_table_name(table_name)
+            return remote_db.table(table, database=schema)
         if self.type == "REST API":
             return remote_db.table(table_name, database=self.schema)
         return remote_db.table(table_name)

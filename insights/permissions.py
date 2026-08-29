@@ -6,6 +6,7 @@ from functools import cached_property
 
 import frappe
 import frappe.share
+from pypika.terms import LiteralValue
 
 from insights.insights.doctype.insights_team.insights_team import (
     get_teams,
@@ -32,6 +33,24 @@ TEAM_BASED_PERMISSION_DOCTYPES = [
     "Insights Dashboard v3",
     "Insights Chart v3",
 ]
+
+INSIGHTS_ROLES = ("Insights User", "Insights Admin", "Insights Viewer")
+
+
+def get_insights_users():
+    """Everyone who may use Insights: an enabled holder of an Insights role.
+
+    One definition serves both sides of sharing - the picker lists this set and
+    `validate_shareable_users` accepts it - so a name the picker offers is never
+    refused when the share is saved. Administrator is left out: it is nobody to
+    browse for, though it can still own a workbook and be granted access to one.
+    """
+    from frappe.utils.user import get_users_with_role
+
+    users = set()
+    for role in INSIGHTS_ROLES:
+        users.update(get_users_with_role(role))
+    return users
 
 
 class InsightsPermissions:
@@ -380,15 +399,87 @@ class InsightsPermissions:
         )
 
     def _build_resource_query(self, doctype):
+        """Grants on `doctype` that the user holds through a team.
+
+        A team is the only thing that carries a grant, so a user in no team must
+        match no row. That case cannot be written as a test of a column: `parent`
+        links a grant back to its team and is set on every row, so any predicate
+        over it is true for all of them. `isin([])` is not an option either -
+        pypika renders it as the invalid `IN ()`. State the empty set as a false
+        constant, where it cannot be read as its own opposite.
+        """
         Resource = frappe.qb.DocType("Insights Resource Permission")
 
-        condition = (Resource.resource_type == doctype) & (Resource.resource_name.isnotnull())
-        if not self.user_teams:
-            condition = condition & (Resource.parent.isnotnull())
-        else:
-            condition = condition & (Resource.parent.isin(self.user_teams))
+        held_by_a_team_of_the_user = (
+            Resource.parent.isin(self.user_teams) if self.user_teams else LiteralValue("1 = 0")
+        )
+        condition = (
+            (Resource.resource_type == doctype)
+            & Resource.resource_name.isnotnull()
+            & held_by_a_team_of_the_user
+        )
 
         return frappe.qb.from_(Resource).select(Resource.resource_name.as_("name")).where(condition)
+
+
+def check_referenced_query_access(query_name):
+    """A query named by another document is still a document you have to read.
+
+    A reference resolves to the whole query - its operations, its native SQL and
+    the tables it reads - and the compiled result carries all of it back.
+
+    An unattended execution has no caller to check, so it is checked against the
+    user it runs as - the one recorded when the content was published.
+    """
+    from insights.permission_user import get_permission_user
+
+    # a name with no row resolves to nothing. The build says "not found" instead.
+    if not frappe.db.exists("Insights Query v3", query_name):
+        return
+
+    if not frappe.has_permission(
+        "Insights Query v3", ptype="read", doc=query_name, user=get_permission_user()
+    ):
+        frappe.throw(
+            frappe._("You do not have access to a query this one references"),
+            frappe.PermissionError,
+        )
+
+
+def check_chart_query_access(chart):
+    """A chart may only point at a query its author can read.
+
+    The link is a grant, not a reference: `_build_query_permission_query` gives
+    read on every query linked from a chart the caller can read, and
+    `get_public_root` reads a link from a public chart the same way. So the link
+    has to be checked where it is written, or it widens the author's own access.
+
+    Only a changed link is checked. An existing chart stays saveable by anyone
+    who may already read it, whose access to the query runs through this link.
+    """
+    if not chart.query or not chart.has_value_changed("query"):
+        return
+
+    if not frappe.has_permission("Insights Query v3", ptype="read", doc=chart.query):
+        frappe.throw(
+            frappe._("You do not have access to the query this chart is built on"),
+            frappe.PermissionError,
+        )
+
+
+def check_dashboard_chart_access(dashboard):
+    """The same rule one level up.
+
+    `_build_chart_permission_query` grants read on every chart placed on a
+    dashboard the caller can read, and `get_chart_root` covers every chart on a
+    public dashboard. Naming a chart here is the same kind of grant.
+    """
+    for row in dashboard.linked_charts:
+        if not frappe.has_permission("Insights Chart v3", ptype="read", doc=row.chart):
+            frappe.throw(
+                frappe._("You do not have access to one of the charts on this dashboard"),
+                frappe.PermissionError,
+            )
 
 
 def has_doc_permission(doc, ptype, user):

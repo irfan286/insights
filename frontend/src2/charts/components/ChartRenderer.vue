@@ -15,6 +15,8 @@ import {
 	MapChartConfig,
 	NumberChartConfig,
 	SankeyChartConfig,
+	AXIS_CHARTS,
+	AxisChartConfig,
 } from '../../types/chart.types'
 import { Chart } from '../chart'
 import {
@@ -25,6 +27,7 @@ import {
 	getLineChartOptions,
 	getMapChartOptions,
 	getSankeyChartOptions,
+	getAxisChartRowOrder,
 } from '../helpers'
 import BaseChart from './BaseChart.vue'
 import DrillDown from './DrillDown.vue'
@@ -42,6 +45,9 @@ const loading = computed(
 )
 
 const eChartOptions = computed(() => {
+	// the result outlives a chart type switch, so without this the option builders
+	// would run against the incoming type's still-empty config
+	if (!props.chart.isConfigValid) return
 	if (!result.value.columns?.length) return
 	if (chart_type.value === 'Bar' || chart_type.value === 'Row') {
 		return getBarChartOptions(
@@ -146,9 +152,13 @@ function handleMapChartClick(params: any) {
 function handleGeneralChartClick(params: any) {
 	let dataIndex = params.dataIndex
 
-	// Adjust index for Row charts (they're displayed in reverse order)
-	if (chart_type.value === 'Row') {
-		dataIndex = result.value.formattedRows.length - 1 - dataIndex
+	if (AXIS_CHARTS.includes(chart_type.value)) {
+		const rowOrder = getAxisChartRowOrder(
+			result.value.rows,
+			(config.value as AxisChartConfig).x_axis,
+			chart_type.value === 'Row',
+		)
+		dataIndex = rowOrder[dataIndex]
 	}
 
 	const row = result.value.formattedRows[dataIndex]
