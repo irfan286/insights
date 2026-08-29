@@ -163,6 +163,27 @@ export function makeQuery(name: string) {
 	let currentExecutionToken = 0
 
 	const adhocFilters = ref<AdhocFilters>()
+	// filters coming from the table's column filter row — kept separate from
+	// `adhocFilters` (set by dashboard filters) so neither overwrites the other
+	const columnFilters = ref<AdhocFilters>()
+
+	const effectiveAdhocFilters = computed<AdhocFilters | undefined>(() => {
+		if (!adhocFilters.value) return columnFilters.value
+		if (!columnFilters.value) return adhocFilters.value
+
+		const merged: AdhocFilters = { ...adhocFilters.value }
+		Object.entries(columnFilters.value).forEach(([query_name, group]) => {
+			const existing = merged[query_name]
+			merged[query_name] = existing
+				? {
+						type: 'filter_group',
+						logical_operator: 'And',
+						filters: [...existing.filters, ...group.filters],
+					}
+				: group
+		})
+		return merged
+	})
 	async function execute(force: boolean = false, page_size?: number) {
 		if (!query.islocal) {
 			await waitUntil(() => query.isloaded)
@@ -185,7 +206,7 @@ export function makeQuery(name: string) {
 			lastExecutionArgs &&
 			isEqual(lastExecutionArgs, {
 				operations: currentOperations.value,
-				adhoc_filters: adhocFilters.value,
+				adhoc_filters: effectiveAdhocFilters.value,
 				page: currentPage.value,
 				page_size: pageSize.value,
 			})
@@ -198,7 +219,7 @@ export function makeQuery(name: string) {
 		return query
 			.call('execute', {
 				active_operation_idx: activeOperationIdx.value,
-				adhoc_filters: adhocFilters.value,
+				adhoc_filters: effectiveAdhocFilters.value,
 				force: Boolean(force),
 				page: currentPage.value,
 				page_size: pageSize.value,
@@ -246,7 +267,7 @@ export function makeQuery(name: string) {
 				executing.value = false
 				lastExecutionArgs = {
 					operations: currentOperations.value,
-					adhoc_filters: adhocFilters.value,
+					adhoc_filters: effectiveAdhocFilters.value,
 					page: currentPage.value,
 					page_size: pageSize.value,
 				}
@@ -274,7 +295,7 @@ export function makeQuery(name: string) {
 		return query
 			.call('get_count', {
 				active_operation_idx: activeOperationIdx.value,
-				adhoc_filters: adhocFilters.value,
+				adhoc_filters: effectiveAdhocFilters.value,
 			})
 			.then((count: number) => {
 				result.value.totalRowCount = count || 0
@@ -582,7 +603,7 @@ export function makeQuery(name: string) {
 				args: {
 					format,
 					active_operation_idx: activeOperationIdx.value,
-					adhoc_filters: adhocFilters.value,
+					adhoc_filters: effectiveAdhocFilters.value,
 				},
 			})
 				.then((payload: any) => {
@@ -666,7 +687,7 @@ export function makeQuery(name: string) {
 
 		return query.call('get_distinct_column_values', {
 			active_operation_idx: _activeOperationIdx,
-			adhoc_filters: adhocFilters.value,
+			adhoc_filters: effectiveAdhocFilters.value,
 			column_name: column,
 			search_term,
 			limit,
@@ -1135,6 +1156,8 @@ export function makeQuery(name: string) {
 		currentOperations,
 		activeEditOperation,
 		adhocFilters,
+		columnFilters,
+		effectiveAdhocFilters,
 
 		autoExecute,
 		executing,

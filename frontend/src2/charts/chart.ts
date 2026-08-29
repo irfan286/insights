@@ -78,7 +78,7 @@ function makeChart(name: string) {
 			force ||
 			reload ||
 			!dataQuery.value.result.executedSQL ||
-			dataQuery.value.adhocFilters ||
+			dataQuery.value.effectiveAdhocFilters ||
 			JSON.stringify(query.doc.operations) !== JSON.stringify(dataQuery.value.doc.operations) ||
 			currentLimit !== dataQuery.value.pageSize
 

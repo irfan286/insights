@@ -128,7 +128,7 @@ function onPageChange(page: number) {
 }
 
 function onFilterChange(filters: Record<string, string>) {
-	const adhocFilters = {} as AdhocFilters
+	const columnFilters = {} as AdhocFilters
 
 	// Collect rules for ALL non-empty column filters into a single filter_group
 	const allRules = [] as FilterArgs[]
@@ -153,13 +153,15 @@ function onFilterChange(filters: Record<string, string>) {
 	})
 
 	if (allRules.length) {
-		adhocFilters[props.query.name] = filter_group({
+		columnFilters[props.query.name] = filter_group({
 			logical_operator: 'And',
 			filters: allRules,
 		})
 	}
 
-	props.query.adhocFilters = adhocFilters
+	// assign to `columnFilters` (not `adhocFilters`) so that dashboard filters
+	// applied on this query aren't wiped out when a column filter changes
+	props.query.columnFilters = allRules.length ? columnFilters : undefined
 
 	isFiltering.value = true
 	props.query.goToPage(1)
