@@ -1,6 +1,7 @@
 # Copyright (c) 2022, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
+import datetime
 import pathlib
 
 import chardet
@@ -8,6 +9,7 @@ import frappe
 import pandas as pd
 from frappe.model.base_document import BaseDocument
 from frappe.website.page_renderers.template_page import TemplatePage
+from pandas.api.types import is_datetime64_any_dtype
 
 
 class ResultColumn:
@@ -219,6 +221,64 @@ def as_text(df: pd.DataFrame) -> pd.DataFrame:
     it would rename the columns of every export something downstream parses.
     """
     return df.map(quote_formula)
+
+
+# A date is a number in a spreadsheet: 2024-01-01 is the serial 45292, and a cell
+# written without a number format shows that number. The writer has to say what
+# the column holds, or the reader has to select it and format it by hand.
+FRAPPE_DATE_FORMATS = (
+    "yyyy-mm-dd",
+    "dd-mm-yyyy",
+    "dd/mm/yyyy",
+    "dd.mm.yyyy",
+    "mm/dd/yyyy",
+    "mm-dd-yyyy",
+)
+DEFAULT_DATE_FORMAT = "yyyy-mm-dd"
+TIME_FORMAT = "hh:mm:ss"
+
+
+def sheet_date_format() -> str:
+    """The site's date format. Frappe writes it in the codes a sheet reads."""
+    date_format = frappe.db.get_single_value("System Settings", "date_format")
+    return date_format if date_format in FRAPPE_DATE_FORMATS else DEFAULT_DATE_FORMAT
+
+
+def date_number_formats(df: pd.DataFrame) -> list[str | None]:
+    """Return the number format each column needs, by position, `None` if none.
+
+    Positional because two columns of an export may share a label, and the
+    writer addresses cells by index.
+    """
+    date_format = sheet_date_format()
+    datetime_format = f"{date_format} {TIME_FORMAT}"
+    return [
+        _number_format(df.iloc[:, position], date_format, datetime_format)
+        for position in range(len(df.columns))
+    ]
+
+
+def _number_format(values: pd.Series, date_format: str, datetime_format: str) -> str | None:
+    if is_datetime64_any_dtype(values):
+        # a timestamp column of nothing but midnights is a date the source
+        # happened to store with a time, and 00:00:00 on every row is noise
+        stamps = values.dropna()
+        carries_a_time = bool(stamps.dt.floor("D").ne(stamps).any())
+        return datetime_format if carries_a_time else date_format
+
+    # ibis hands a date column back as `object`, holding date instances
+    values = values.dropna()
+    if values.empty:
+        return None
+
+    value = values.iloc[0]
+    if isinstance(value, datetime.datetime):
+        return datetime_format
+    if isinstance(value, datetime.date):
+        return date_format
+    if isinstance(value, datetime.time):
+        return TIME_FORMAT
+    return None
 
 
 def xls_to_df(file_path: str) -> list[pd.DataFrame]:

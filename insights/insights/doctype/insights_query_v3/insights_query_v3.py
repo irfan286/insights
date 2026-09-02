@@ -29,7 +29,7 @@ from insights.insights.query_utils import (
     table_references,
     transitive_closure,
 )
-from insights.utils import as_text, deep_convert_dict_to_dict
+from insights.utils import as_text, date_number_formats, deep_convert_dict_to_dict
 
 
 class InsightsQueryv3(Document):
@@ -302,6 +302,9 @@ class InsightsQueryv3(Document):
             for col in results.select_dtypes(include=["datetimetz"]).columns:
                 results[col] = results[col].dt.tz_localize(None)
 
+            # read before the frame goes to object dtype, which loses the types
+            number_formats = date_number_formats(results)
+
             # replace NaN with None once at numpy level, then dump to plain Python list
             results = results.astype(object).where(results.notna(), other=None)
             data = results.values.tolist()
@@ -310,8 +313,20 @@ class InsightsQueryv3(Document):
             wb = xlsxwriter.Workbook(output, {"constant_memory": True, "in_memory": True})
             ws = wb.add_worksheet()
             ws.write_row(0, 0, results.columns.tolist())
+
+            cell_formats = [
+                wb.add_format({"num_format": number_format}) if number_format else None
+                for number_format in number_formats
+            ]
+            for col_idx, number_format in enumerate(number_formats):
+                if number_format:
+                    # a date too wide for the column reads as ###, so the column
+                    # is widened to the format it now carries
+                    ws.set_column(col_idx, col_idx, len(number_format) + 2, cell_formats[col_idx])
+
             for row_idx, row in enumerate(data, start=1):
-                ws.write_row(row_idx, 0, row)
+                for col_idx, value in enumerate(row):
+                    ws.write(row_idx, col_idx, value, cell_formats[col_idx])
             wb.close()
 
             t2 = time.time()
